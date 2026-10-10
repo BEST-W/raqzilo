@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import * as mupdf from 'mupdf';
+import * as engine from '../lib/pdf-engine.ts';
+import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { unzipSync, strFromU8 } from 'fflate';
+engine.installEngineForTests(mupdf);
+engine.installFontForTests(new Uint8Array(await fs.readFile('public/fonts/DejaVuSans.ttf')));
+async function text(bytes,page=0){const doc=new mupdf.PDFDocument(bytes);const p=doc.loadPage(page),st=p.toStructuredText('');try{return st.asText();}finally{st.destroy();p.destroy();doc.destroy();}}
+const pdf=await PDFDocument.create();const font=await pdf.embedFont(StandardFonts.Helvetica);const p=pdf.addPage([595,842]);p.drawText('SECRET_ACCOUNT_1234',{x:60,y:650,size:18,font});p.drawText('KEEP_VISIBLE',{x:60,y:580,size:18,font});const p2=pdf.addPage([595,842]);p2.drawText('SECOND_PAGE',{x:60,y:700,size:18,font});const original=await pdf.save();
+assert.equal((await engine.inspect(original)).length,2);
+const rendered=await engine.renderPage(original,0,600);assert(rendered.png.length>100);const target=rendered.lines.find(l=>l.text.includes('SECRET_ACCOUNT'));assert(target);
+const mark={id:'redact',page:0,kind:'redact',color:'#000000',size:18,...target,x:target.x-.005,y:target.y-.005,w:target.w+.01,h:target.h+.01};
+const redacted=await engine.applyMarks(original,[mark]);assert(!(await text(redacted)).includes('SECRET_ACCOUNT_1234'));assert((await text(redacted)).includes('KEEP_VISIBLE'));assert(!(await text(redacted,1)).includes('SECRET_ACCOUNT_1234'));
+const replaced=await engine.applyMarks(original,[{...mark,kind:'replace',text:'REPLACED_TEXT',color:'#20282b'}]);assert(!(await text(replaced)).includes('SECRET_ACCOUNT_1234'));assert((await text(replaced)).includes('REPLACED_TEXT'));
+const moved=await engine.applyMarks(original,[{...mark,kind:'replace',text:'MOVED_TEXT',color:'#20282b',source:mark,x:.5,y:.5,w:.4,h:.1}]);assert(!(await text(moved)).includes('SECRET_ACCOUNT_1234'));assert((await text(moved)).includes('MOVED_TEXT'));
+const arabic=await engine.applyMarks(replaced,[{id:'arabic',page:0,kind:'text',x:.1,y:.4,w:.7,h:.1,size:24,text:'مستنداتك تحت سيطرتك',color:'#20282b'}]);await fs.mkdir('/tmp/mustanad-pdf-qa',{recursive:true});await fs.writeFile('/tmp/mustanad-pdf-qa/arabic.png',(await engine.renderPage(arabic,0,1000)).png);
+const ordered=await engine.reorder(original,[1,0]);assert((await text(ordered)).includes('SECOND_PAGE'));const one=await engine.reorder(original,[1]);assert.equal((await engine.inspect(one)).length,1);
+const rotated=await engine.rotatePage(original,0);assert.equal((await engine.inspect(rotated))[0].width,842);
+const merged=await engine.appendPdfs(original,[one]);assert.equal((await engine.inspect(merged)).length,3);
+const withField=await engine.applyMarks(original,[{id:'field',page:0,kind:'field',x:.1,y:.65,w:.5,h:.05,size:12,name:'client_name',text:'Before',color:'#20282b'}]);const fields=await engine.readFields(withField);assert.equal(fields[0].name,'client_name');const filled=await engine.fillFields(withField,{client_name:'After'});assert.equal((await engine.readFields(filled))[0].value,'After');
+const png=(await engine.renderPage(original,0,100)).png;const stamp=await engine.applyMarks(original,[{id:'image',page:0,kind:'image',x:.1,y:.65,w:.2,h:.2,size:12,image:'data:image/png;base64,'+Buffer.from(png).toString('base64'),color:'#000000'}]);assert((await engine.renderPage(stamp,0,400)).png.length>100);
+const docx=await engine.toWord(replaced,'Test');const xml=strFromU8(unzipSync(docx)['word/document.xml']);assert(xml.includes('REPLACED_TEXT'));assert(!xml.includes('SECRET_ACCOUNT_1234'));
+assert.deepEqual(engine.parseRange('1-2, 2',2),[0,1]);assert.throws(()=>engine.parseRange('0',2));assert.throws(()=>engine.parseRange('3',2));
+assert((await engine.compressLossless(original)).length>0);
+const encrypted=new mupdf.PDFDocument(original);const encryptedBuffer=encrypted.saveToBuffer('encrypt=aes-256,user-password=hello,owner-password=owner');const encryptedBytes=encryptedBuffer.asUint8Array().slice();encryptedBuffer.destroy();encrypted.destroy();await assert.rejects(()=>engine.unlock(encryptedBytes),/PASSWORD/);const unlocked=await engine.unlock(encryptedBytes,'hello');assert.equal((await engine.inspect(unlocked)).length,2);assert((await text(unlocked)).includes('SECRET_ACCOUNT_1234'));assert((await engine.renderPage(unlocked,0,400)).png.length>100);
+console.log('PASS: render, true redaction, replacement, Arabic, pages, rotation, merge, form creation/filling, image stamp, Word, ranges, compression, password');

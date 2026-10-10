@@ -1,0 +1,175 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "npm run build",
+  "outputDirectory": "public",
+  "functions": {
+    "api/gateway.js": {
+      "maxDuration": 75
+    }
+  },
+  "routes": [
+    {
+      "src": "/api/shares/(?<shareId>[a-f0-9]{32})",
+      "methods": [
+        "PUT"
+      ],
+      "has": [
+        {
+          "type": "host",
+          "value": {
+            "eq": "raqzilo.vercel.app"
+          }
+        },
+        {
+          "type": "header",
+          "key": "origin",
+          "value": {
+            "eq": "https://raqzilo.vercel.app"
+          }
+        },
+        {
+          "type": "cookie",
+          "key": "pdf-share-device",
+          "value": "(?<shareDevice>[a-f0-9]{64})"
+        }
+      ],
+      "dest": "https://mustanad-pdf.abdulhadisa966.chatgpt.site/api/shares/$shareId",
+      "transforms": [
+        {
+          "type": "request.headers",
+          "op": "delete",
+          "target": {
+            "key": "authorization"
+          }
+        },
+        {
+          "type": "request.headers",
+          "op": "delete",
+          "target": {
+            "key": "proxy-authorization"
+          }
+        },
+        {
+          "type": "request.headers",
+          "op": "delete",
+          "target": {
+            "key": "forwarded"
+          }
+        },
+        {
+          "type": "request.headers",
+          "op": "delete",
+          "target": {
+            "key": {
+              "pre": "oai-"
+            }
+          }
+        },
+        {
+          "type": "request.headers",
+          "op": "delete",
+          "target": {
+            "key": {
+              "pre": "cf-"
+            }
+          }
+        },
+        {
+          "type": "request.headers",
+          "op": "delete",
+          "target": {
+            "key": {
+              "pre": "x-openai-"
+            }
+          }
+        },
+        {
+          "type": "request.headers",
+          "op": "delete",
+          "target": {
+            "key": {
+              "pre": "x-vercel-"
+            }
+          }
+        },
+        {
+          "type": "request.headers",
+          "op": "delete",
+          "target": {
+            "key": {
+              "pre": "x-forwarded-"
+            }
+          }
+        },
+        {
+          "type": "request.headers",
+          "op": "delete",
+          "target": {
+            "key": {
+              "pre": "x-real-"
+            }
+          }
+        },
+        {
+          "type": "request.headers",
+          "op": "set",
+          "target": {
+            "key": "cookie"
+          },
+          "args": "pdf-share-device=$shareDevice"
+        },
+        {
+          "type": "request.headers",
+          "op": "set",
+          "target": {
+            "key": "origin"
+          },
+          "args": "https://mustanad-pdf.abdulhadisa966.chatgpt.site"
+        },
+        {
+          "type": "request.headers",
+          "op": "delete",
+          "target": {
+            "key": "referer"
+          }
+        }
+      ]
+    },
+    {
+      "src": "/favicon\\.svg",
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "dest": "/favicon.svg"
+    },
+    {
+      "src": "/favicon\\.png",
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "dest": "/favicon.png"
+    },
+    {
+      "src": "/favicon\\.ico",
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "dest": "/favicon.ico"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/api/gateway",
+      "transforms": [
+        {
+          "type": "request.path",
+          "op": "set",
+          "args": "/$1"
+        }
+      ]
+    }
+  ]
+}

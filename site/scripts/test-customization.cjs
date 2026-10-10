@@ -1,0 +1,65 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const ts=require('typescript');
+const {DatabaseSync}=require('node:sqlite');
+function compile(file,mocks={}){
+ const code=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText;
+ const module={exports:{}};
+ vm.runInNewContext(code,{module,exports:module.exports,Error,URL,Headers,Request,Response,require:name=>Object.hasOwn(mocks,name)?mocks[name]:require(name)},{filename:file});
+ return module.exports;
+}
+const model=compile('lib/settings-model.ts');
+const {settingsSchema,defaultSettings,getToolEntries,moveTool,readableForeground}=model;
+const oldSettings=JSON.parse(JSON.stringify(defaultSettings));
+delete oldSettings.theme;delete oldSettings.customTools;delete oldSettings.toolOrder;
+for(const key of ['nameEn','taglineEn','announcementEn'])delete oldSettings[key];
+for(const key of ['crop','protect','compare','ocr','templates','share'])delete oldSettings.tools[key];
+oldSettings.name='موقعي الخاص';oldSettings.accent='#19Ab73';oldSettings.tools.merge=false;
+const migrated=settingsSchema.parse(oldSettings);
+assert.equal(migrated.name,oldSettings.name);assert.equal(migrated.accent,oldSettings.accent);assert.equal(migrated.tools.merge,false);
+for(const key of ['crop','protect','compare','ocr','templates','share'])assert.equal(migrated.tools[key],true);
+assert.equal(migrated.customTools.length,0);assert.equal(migrated.theme.sidebar,'#141c30');
+assert.equal(migrated.nameEn,'');assert.equal(migrated.taglineEn,'');assert.equal(migrated.announcementEn,'');
+assert.equal(readableForeground('#ffffff'),'#17202a');assert.equal(readableForeground('#000000'),'#ffffff');
+const tool={id:'custom_number01',name:'ترقيم العقود',nameEn:'Contract numbering',description:'أرقام الصفحات',descriptionEn:'Number contract pages',action:'numberPages',enabled:true,icon:'hash',color:'#129aa6',url:'',defaultText:''};
+const link={...tool,id:'custom_external01',name:'بوابة الفواتير',action:'openLink',icon:'link',url:'https://example.test/invoices'};
+const custom=settingsSchema.parse({...migrated,nameEn:'My own site',taglineEn:'My PDF workspace',announcementEn:'Welcome',customTools:[tool,link],toolOrder:['custom_number01','edit','custom_external01'],theme:{...migrated.theme,canvas:'#162338',text:'#293da7'}});
+assert.equal(getToolEntries(custom)[0].id,tool.id);assert.equal(getToolEntries(custom).length,model.toolKeys.length+2);
+assert.equal(getToolEntries(custom)[2].tool.url,link.url);
+assert.equal(moveTool(['edit','sign',tool.id],tool.id,'edit')[0],tool.id);
+assert.equal(moveTool(['edit','sign',tool.id],'edit',tool.id)[2],'edit');
+assert.equal(getToolEntries(settingsSchema.parse({...custom,customTools:[{...tool,enabled:false},link]})).find(t=>t.id===tool.id).enabled,false);
+for(const url of ['javascript:alert(1)','data:text/html,hi','http://example.test','https://user:password@example.test','/relative']){
+ assert.equal(settingsSchema.safeParse({...custom,customTools:[tool,{...link,url}]}).success,false);
+}
+assert.equal(settingsSchema.safeParse({...custom,customTools:[tool,tool]}).success,false);
+assert.equal(settingsSchema.safeParse({...custom,toolOrder:['edit','edit']}).success,false);
+assert.equal(settingsSchema.safeParse({...custom,toolOrder:['unknown']}).success,false);
+assert.equal(settingsSchema.safeParse({...custom,theme:{...custom.theme,canvas:'red'}}).success,false);
+const sqlite=new DatabaseSync(':memory:');
+sqlite.exec(fs.readFileSync('drizzle/0000_uneven_owl.sql','utf8').replaceAll('--> statement-breakpoint',''));
+sqlite.prepare('INSERT INTO site_settings (id,config,revision,updated_at) VALUES (?,?,?,?)').run('main',JSON.stringify(oldSettings),1,'2026-10-04');
+const binding={prepare(sql){const statement=sqlite.prepare(sql);return{bind(...args){return{async first(){return statement.get(...args)||null;},async run(){const result=statement.run(...args);return{meta:{changes:Number(result.changes)}};}};}};}};
+const server=compile('lib/settings-server.ts',{'cloudflare:workers':{env:{DB:binding}},'./settings-model':model,'./owner-policy':{resolveOwner:async()=>false},'@/app/chatgpt-auth':{getChatGPTUser:async()=>null}});
+let allowed=true;
+const route=compile('app/api/settings/route.ts',{'@/lib/settings-model':model,'@/lib/settings-server':{...server,ownerStatus:async()=>({allowed})}});
+const origin='https://pdf.example.test';
+const put=(settings,revision,requestOrigin=origin)=>route.PUT(new Request(origin+'/api/settings',{method:'PUT',headers:{'content-type':'application/json',origin:requestOrigin},body:JSON.stringify({settings,revision})}));
+(async()=>{
+ const before=await server.readSettings();assert.equal(before.revision,1);assert.equal(before.settings.customTools.length,0);
+ let response=await put(custom,1);assert.equal(response.status,200);
+ let saved=await response.json();assert.equal(saved.revision,2);assert.equal(saved.settings.customTools[0].id,tool.id);assert.equal(saved.settings.theme.canvas,'#162338');
+ assert.equal(saved.settings.nameEn,'My own site');assert.equal(saved.settings.announcementEn,'Welcome');assert.equal(saved.settings.customTools[0].nameEn,'Contract numbering');
+ const read=await route.GET();assert.equal((await read.json()).settings.customTools[1].url,link.url);
+ assert.equal((await put(custom,1)).status,409);
+ assert.equal((await put(custom,2,'https://other.example.test')).status,403);
+ allowed=false;assert.equal((await put(custom,2)).status,403);allowed=true;
+ assert.equal((await server.readSettings()).revision,2);
+ assert.equal((await put({...custom,customTools:[{...link,url:'javascript:alert(1)'}],toolOrder:[]},2)).status,400);
+ const many=settingsSchema.parse({...custom,customTools:Array.from({length:24},(_,i)=>({...link,id:'custom_large'+String(i).padStart(6,'0'),url:'https://example.test/'+('a'.repeat(950))})),toolOrder:[]});
+ assert(JSON.stringify({settings:many,revision:2}).length>16384);
+ response=await put(many,2);assert.equal(response.status,200);saved=await response.json();assert.equal(saved.settings.customTools.length,24);assert.equal(saved.revision,3);
+ assert.equal((await server.readSettings()).settings.name,'موقعي الخاص');
+ sqlite.close();console.log('PASS: legacy settings, arbitrary hex colors, custom tool ordering/visibility, safe links, actual API persistence, optimistic revisions, owner/origin checks, 24 tools');
+})().catch(error=>{console.error(error);process.exitCode=1;});
