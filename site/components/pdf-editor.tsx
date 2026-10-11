@@ -184,7 +184,7 @@ export default function Editor({ settings, isOwner = false }: {
         setHistory([]);
         setMarks([]);
         setDirty(false);
-    } setBytes(data); setName(filename); setPages(info); setPage(0); setSelected(null); setFields([]); setValues({}); setView("editor"); setZoom(1); if (pendingExtra.current) {
+    } const loadedFields = category === "forms" ? await engine.readFields(data) : []; setBytes(data); setName(filename); setPages(info); setPage(0); setSelected(null); setFields(loadedFields); setValues(Object.fromEntries(loadedFields.map(field => [field.name, field.value]))); setView("editor"); setZoom(1); if (pendingExtra.current) {
         const next = pendingExtra.current;
         pendingExtra.current = null;
         openExtraDialog(next);

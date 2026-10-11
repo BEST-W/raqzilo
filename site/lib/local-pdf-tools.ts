@@ -1,3 +1,4 @@
+import { bidirectionalFontkit } from "./pdf-text-layout.ts";
 import {translate,type Language} from "./translations";
 import {getEngine,type Bytes,type Box,type Mark} from "./pdf-engine";
 
@@ -94,7 +95,7 @@ export type OcrWord=Box&{text:string};
 export type OcrPage={index:number;text:string;confidence:number;words:OcrWord[]};
 export async function searchablePdf(bytes:Bytes,pages:OcrPage[],fontData:Bytes){
   const [{PDFDocument,rgb},fontkit,m]=await Promise.all([import("pdf-lib"),import("@pdf-lib/fontkit"),getEngine()]);
-  const pdf=await PDFDocument.load(bytes);pdf.registerFontkit(fontkit.default);const font=await pdf.embedFont(fontData,{subset:true}),source=new m.PDFDocument(bytes);
+  const pdf=await PDFDocument.load(bytes);pdf.registerFontkit(bidirectionalFontkit(fontkit.default));const font=await pdf.embedFont(fontData,{subset:true}),source=new m.PDFDocument(bytes);
   try{
     for(const recognized of pages){
       const page=source.loadPage(recognized.index);

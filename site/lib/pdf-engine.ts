@@ -1,4 +1,5 @@
 import type * as MuPDF from "mupdf";
+import { bidirectionalFontkit, pdfTextIsRtl } from "./pdf-text-layout.ts";
 export type Bytes = Uint8Array;
 export type Box = {x:number;y:number;w:number;h:number};
 export type FieldKind="text"|"checkbox"|"dropdown";
@@ -79,7 +80,7 @@ export async function applyMarks(bytes:Bytes,marks:Mark[]) {
   const textMarks=marks.filter(x=>x.kind==="text"||x.kind==="replace"||x.kind==="field");
   if(!textMarks.length)return normalized;
   const [{PDFDocument,rgb:pdfRgb,degrees},fontkit]=await Promise.all([import("pdf-lib"),import("@pdf-lib/fontkit")]);
-  const pdf=await PDFDocument.load(normalized);pdf.registerFontkit(fontkit.default);
+  const pdf=await PDFDocument.load(normalized);pdf.registerFontkit(bidirectionalFontkit(fontkit.default));
   const font=await pdf.embedFont(testFont||await fontBytes(),{subset:true});
   for(const mark of textMarks){
     const info=transforms.get(mark.page)!;const r=rect(mark,info.bounds);const inv=info.inverse;
@@ -102,7 +103,7 @@ export async function applyMarks(bytes:Bytes,marks:Mark[]) {
       const paragraphs=(mark.text||"").split("\n");let lineIndex=0;
       for(const paragraph of paragraphs){const words=paragraph.split(/\s+/);let line="";const lines:string[]=[];
         for(const word of words){const next=line?line+" "+word:word;if(line&&font.widthOfTextAtSize(next,size)>r[2]-r[0]){lines.push(line);line=word;}else line=next;}lines.push(line);
-        for(const text of lines){if((lineIndex+.8)*size*1.25>r[3]-r[1])break;const rtl=/[\u0600-\u06ff]/.test(text);const width=font.widthOfTextAtSize(text,size);const position=point(rtl?Math.max(r[0],r[2]-width):r[0],r[1]+size*.85+lineIndex*size*1.25);page.drawText(text,{...position,size,font,color:pdfRgb(cr,cg,cb),rotate:degrees(info.rotation)});lineIndex++;}
+        for(const text of lines){if((lineIndex+.8)*size*1.25>r[3]-r[1])break;const rtl=pdfTextIsRtl(text);const width=font.widthOfTextAtSize(text,size);const position=point(rtl?Math.max(r[0],r[2]-width):r[0],r[1]+size*.85+lineIndex*size*1.25);page.drawText(text,{...position,size,font,color:pdfRgb(cr,cg,cb),rotate:degrees(info.rotation)});lineIndex++;}
       }
     }
   }
@@ -121,8 +122,9 @@ export async function appendPdfs(bytes:Bytes,others:Bytes[]) {
   try{for(const extra of others){const source=document(m,extra);try{if(source.needsPassword())throw new Error("افتح الملف المحمي أولاً، ثم نزّل نسخة منه قبل الدمج.");if(doc.countPages()+source.countPages()>250)throw new Error("الحد الحالي 250 صفحة.");for(let i=0;i<source.countPages();i++)doc.graftPage(-1,source,i);}finally{source.destroy();}}return save(doc);}finally{doc.destroy();}
 }
 export function parseRange(value:string,count:number){
+  const normalized=value.replace(/[٠-٩]/g,char=>String(char.charCodeAt(0)-0x660)).replace(/[۰-۹]/g,char=>String(char.charCodeAt(0)-0x6f0)).replace(/[\u200e\u200f\u061c]/g,"").replace(/[–—−]/g,"-").replace(/،/g,",");
   const out:number[]=[];
-  for(const part of value.replace(/،/g,",").split(",")){const match=part.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/);if(!match)throw new Error("اكتب الصفحات مثل 1-3, 5.");const start=Number(match[1]),end=Number(match[2]||start);if(start<1||end<start||end>count)throw new Error("نطاق الصفحات خارج المستند.");for(let i=start;i<=end;i++)if(!out.includes(i-1))out.push(i-1);}
+  for(const part of normalized.split(",")){const match=part.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/);if(!match)throw new Error("اكتب الصفحات مثل 1-3, 5.");const start=Number(match[1]),end=Number(match[2]||start);if(start<1||end<start||end>count)throw new Error("نطاق الصفحات خارج المستند.");for(let i=start;i<=end;i++)if(!out.includes(i-1))out.push(i-1);}
   if(!out.length)throw new Error("اختر صفحة واحدة على الأقل.");return out;
 }
 export async function compressLossless(bytes:Bytes){const m=await getEngine();const doc=document(m,bytes);try{return save(doc);}finally{doc.destroy();}}
@@ -138,7 +140,7 @@ export async function readFields(bytes:Bytes){const m=await getEngine();const do
 export async function fillFields(bytes:Bytes,values:Record<string,string>){
   for(const field of await readFields(bytes)){const value=values[field.name]??field.value;if(field.required&&(!value.trim()||field.kind==="checkbox"&&value==="Off"))throw new Error("الخانة مطلوبة: "+field.name);}
   const [{PDFDocument,PDFTextField,PDFDropdown,PDFOptionList,PDFCheckBox,TextAlignment},fontkit]=await Promise.all([import("pdf-lib"),import("@pdf-lib/fontkit")]);
-  const pdf=await PDFDocument.load(bytes);pdf.registerFontkit(fontkit.default);const font=await pdf.embedFont(testFont||await fontBytes(),{subset:true});
+  const pdf=await PDFDocument.load(bytes);pdf.registerFontkit(bidirectionalFontkit(fontkit.default));const font=await pdf.embedFont(testFont||await fontBytes(),{subset:true});
   for(const field of pdf.getForm().getFields()){
     const value=values[field.getName()];if(value===undefined||field.isReadOnly())continue;
     if(field instanceof PDFTextField){field.setText(value);if(/[\u0600-\u06ff]/.test(value))field.setAlignment(TextAlignment.Right);field.updateAppearances(font);}
@@ -173,7 +175,7 @@ async function nativeTextOverlay(bytes:Bytes,draw:(info:PageGeometry,index:numbe
   const m=await getEngine();const source=document(m,bytes);const geometry:PageGeometry[]=[];
   try{for(let index=0;index<source.countPages();index++){const page=source.loadPage(index);try{const rotate=page.getObject().getInheritable("Rotate");geometry.push({bounds:page.getBounds(),inverse:m.Matrix.invert(page.getTransform()),rotation:rotate.asNumber()||0});rotate.destroy();}finally{page.destroy();}}}finally{source.destroy();}
   const [{PDFDocument,rgb:pdfRgb,degrees},fontkit]=await Promise.all([import("pdf-lib"),import("@pdf-lib/fontkit")]);
-  const pdf=await PDFDocument.load(bytes);pdf.registerFontkit(fontkit.default);const font=await pdf.embedFont(testFont||await fontBytes(),{subset:true});
+  const pdf=await PDFDocument.load(bytes);pdf.registerFontkit(bidirectionalFontkit(fontkit.default));const font=await pdf.embedFont(testFont||await fontBytes(),{subset:true});
   for(let index=0;index<geometry.length;index++){const info=geometry[index],data=draw(info,index,geometry.length,(text,size)=>font.widthOfTextAtSize(text,size));const inv=info.inverse;const x=inv[0]*data.x+inv[2]*data.y+inv[4],y=inv[1]*data.x+inv[3]*data.y+inv[5];const [r,g,b]=rgb(data.color);pdf.getPage(index).drawText(data.text,{x,y,size:data.size,font,color:pdfRgb(r,g,b),opacity:data.opacity,rotate:degrees(info.rotation+data.angle)});}
   return pdf.save({updateFieldAppearances:false});
 }
