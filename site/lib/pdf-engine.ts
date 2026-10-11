@@ -1,5 +1,6 @@
 import type * as MuPDF from "mupdf";
 import { bidirectionalFontkit, pdfTextIsRtl } from "./pdf-text-layout.ts";
+import { copyPdfDocument } from "./pdf-merge.ts";
 export type Bytes = Uint8Array;
 export type Box = {x:number;y:number;w:number;h:number};
 export type FieldKind="text"|"checkbox"|"dropdown";
@@ -143,7 +144,7 @@ export async function rotatePage(bytes:Bytes,index:number){
 }
 export async function appendPdfs(bytes:Bytes,others:Bytes[]) {
   const m=await getEngine();const doc=document(m,bytes);
-  try{for(const extra of others){const source=document(m,extra);try{if(source.needsPassword())throw new Error("افتح الملف المحمي أولاً، ثم نزّل نسخة منه قبل الدمج.");if(doc.countPages()+source.countPages()>250)throw new Error("الحد الحالي 250 صفحة.");for(let i=0;i<source.countPages();i++)doc.graftPage(-1,source,i);}finally{source.destroy();}}return save(doc);}finally{doc.destroy();}
+  try{for(const extra of others){const source=document(m,extra);try{if(source.needsPassword())throw new Error("افتح الملف المحمي أولاً، ثم نزّل نسخة منه قبل الدمج.");if(!source.countPages())throw new Error("المستند لا يحتوي على صفحات.");if(doc.countPages()+source.countPages()>250)throw new Error("الحد الحالي 250 صفحة.");copyPdfDocument(doc,source);}finally{source.destroy();}}return save(doc);}finally{doc.destroy();}
 }
 export function parseRange(value:string,count:number){
   const normalized=value.replace(/[٠-٩]/g,char=>String(char.charCodeAt(0)-0x660)).replace(/[۰-۹]/g,char=>String(char.charCodeAt(0)-0x6f0)).replace(/[\u200e\u200f\u061c]/g,"").replace(/[–—−]/g,"-").replace(/،/g,",");
