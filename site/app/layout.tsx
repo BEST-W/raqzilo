@@ -26,6 +26,7 @@ export default async function RootLayout({
   return (
     <html lang={language} dir={language === "ar" ? "rtl" : "ltr"}>
       <head>
+        <meta name="google-site-verification" content="igXaVHtprFJQ2Ec484l3KIr0dWpe8RxLuQokknki5cE" />
         <meta name="google-site-verification" content="rmIC3PZ1db-Sz-IMj0ol5oSiBdgwxCNromXVvBQfWZs" />
         <meta name="google-site-verification" content="YwY_bsc369Ux4sjFNNZe60sVvva6JYv3bMGie4RfKCQ" />
       </head>

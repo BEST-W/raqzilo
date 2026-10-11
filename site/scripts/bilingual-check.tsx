@@ -5,7 +5,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import Editor from '../components/pdf-editor';
 import AdminPanel from '../components/admin-panel';
-import AdminAccess from '../components/admin-access';
+import OwnerLogin from '../components/owner-login';
 import {SharePage, SharedLinkPage, MissingShare} from '../components/share-pages';
 import { LanguageProvider } from '../components/language-provider';
 import { defaultSettings, settingsSchema } from '../lib/settings-model';
@@ -34,8 +34,8 @@ for (const locale of ['ar', 'en'] as Language[]) {
   const admin = renderToStaticMarkup(<LanguageProvider initialLanguage={locale}><AdminPanel initial={defaultSettings} initialRevision={2} ownerName="Abdulhadi"/></LanguageProvider>);
   assert(admin.includes(locale === 'ar' ? 'حفظ التغييرات' : 'Save changes'));
   if (locale === 'en') assert(!/[\u0600-\u06ff]/.test(plainText(admin)), 'English administration must not contain untranslated interface text');
-  const access = renderToStaticMarkup(<LanguageProvider initialLanguage={locale}><AdminAccess reason="signin" signInHref="/signin"/></LanguageProvider>);
-  assert(access.includes(locale === 'ar' ? 'الدخول بحساب ChatGPT' : 'Sign in with ChatGPT'));
+  const access = renderToStaticMarkup(<LanguageProvider initialLanguage={locale}><OwnerLogin /></LanguageProvider>);
+  assert(access.includes(locale === 'ar' ? 'دخول مالك الموقع' : 'Owner sign in'));
   if (locale === 'en') assert(!/[\u0600-\u06ff]/.test(plainText(access)));
   for(const screen of [<SharePage settings={defaultSettings}/>,<SharedLinkPage settings={defaultSettings} file={{id:'a'.repeat(32),filename:'Contract.pdf',size:2048,createdAt:Date.now(),path:'/s/'+ 'a'.repeat(32)}}/>,<MissingShare/>,<MissingShare unavailable/>]) {
     const markup=renderToStaticMarkup(<LanguageProvider initialLanguage={locale}>{screen}</LanguageProvider>);
@@ -51,7 +51,7 @@ assert.equal(translateMessage('en', 'قراءة الصفحة 3 (2/5)…'), 'Reco
 assert.equal(translateMessage('ar', 'Recognizing page 3 (2/5)…'), 'قراءة الصفحة 3 (2/5)…');
 assert.equal(translateMessage('en', 'نطاق الصفحات خارج المستند.'), 'The page range is outside this document.');
 
-const files = ['components/markdown-dialog.tsx', 'components/pdf-editor.tsx', 'components/local-tools-dialog.tsx', 'components/admin-panel.tsx', 'components/admin-access.tsx', 'components/page-rail.tsx', 'components/field-properties.tsx', 'components/customization/color-control.tsx', 'components/customization/tool-manager.tsx', 'components/home-workspace.tsx', 'components/share-panel.tsx', 'components/share-pages.tsx'];
+const files = ['components/markdown-dialog.tsx', 'components/pdf-editor.tsx', 'components/local-tools-dialog.tsx', 'components/admin-panel.tsx', 'components/owner-login.tsx', 'components/page-rail.tsx', 'components/field-properties.tsx', 'components/customization/color-control.tsx', 'components/customization/tool-manager.tsx', 'components/home-workspace.tsx', 'components/share-panel.tsx', 'components/share-pages.tsx'];
 for (const file of files) {
   const source = await fs.readFile(file, 'utf8');
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);

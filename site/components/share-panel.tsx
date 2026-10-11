@@ -5,6 +5,7 @@ import { useLanguage } from "./language-provider";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { SHARE_MAX_BYTES, type SharedFile } from "@/lib/sharing-model";
+import { uploadPresigned } from "@vercel/blob/client";
 
 type List = {items: SharedFile[]; storage?: {bytes:number;count:number;maxBytes:number}};
 const sizeLabel = (size:number) => size < 1048576 ? `${Math.round(size / 1024)} KB` : `${(size / 1048576).toFixed(1)} MB`;
@@ -43,7 +44,8 @@ export default function SharePanel({ownerMode=false,currentName,getCurrentFile,e
     setBusy(true);setError("");setNotice("");
     try {
       const grant=await result<{id:string;uploadToken:string}>(await fetch("/api/shares",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({filename:file.name.slice(0,146).replace(/\.pdf$/i,"")+".pdf",size:file.size,consent:true})}));
-      const data=await result<{file:SharedFile}>(await fetch("/api/shares/"+grant.id,{method:"PUT",headers:{"Content-Type":"application/pdf","X-Upload-Token":grant.uploadToken},body:file}));
+      await uploadPresigned("pdf-shares/"+grant.id+".pdf",file,{access:"private",contentType:"application/pdf",handleUploadUrl:"/api/shares/upload",clientPayload:grant.id,multipart:false,headers:{"X-Upload-Token":grant.uploadToken}});
+      const data=await result<{file:SharedFile}>(await fetch("/api/shares/"+grant.id,{method:"PUT",headers:{"X-Upload-Token":grant.uploadToken}}));
       setCreated(data.file);setFile(null);setConsent(false);setNotice("تم إنشاء الرابط. يمكنك نسخه ومشاركته الآن.");await refresh();
     } catch(e){setError(e instanceof Error?e.message:"تعذر إكمال العملية. حاول مرة أخرى.");}
     finally{setBusy(false);}

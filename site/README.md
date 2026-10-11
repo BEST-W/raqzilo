@@ -1,49 +1,77 @@
-# راقزيلو — Raqzilo
+# Raqzilo — independent Vercel application
 
-A bilingual Arabic/English PDF workspace with an owner-only administration panel. Editing stays in browser memory. Optional sharing uploads a selected copy, with explicit consent, to managed R2 storage; D1 stores share metadata, upload quotas, site configuration and the owner identity binding.
+Arabic/English PDF editing, page organization, OCR, Markdown conversion and optional sharing. PDF processing runs in the browser; only explicit sharing uploads a selected copy. The stable public domain is https://raqzilo.vercel.app/.
 
-## Features
+## Runtime and development
 
-- Convert PDF text to Markdown with headings and tables where detectable. Corrupt font maps are flagged for OCR; Markdown token counts depend on the source text and the consuming tool.
-- Choose Arabic or English from the device's preferred languages on the first visit, with an explicit language switch and a saved preference.
-- Render, search and navigate PDF pages; open password-protected PDFs with the supplied password.
-- Add Unicode text and images; replace existing text by line. Replacement removes the original intersecting content before adding the replacement.
-- Add visible handwritten signatures and highlighting.
-- Apply real redaction to text, overlapping image pixels and intersecting vector graphics. MuPDF saves with garbage collection so removed page objects are not kept in the exported PDF. Review the exported document before sharing. Redaction covers page content, not arbitrary attachments, hidden layers, metadata or unrelated document properties.
-- Reorder pages by dragging their thumbnails, using the touch drag handle, or Alt+Up/Down; an insertion line shows the destination and the list scrolls near its edges. Reordering keeps the current page, pending text/signatures/other marks, and supports undo. Rotate, remove, merge, extract and split pages.
-- Create AcroForm text fields, checkboxes and dropdowns, with defaults and required flags; fill supported fields. Required values are checked when applying form values.
-- Crop selected pages with a percentage margin preview, including rotated pages. Cropping changes CropBox, not the underlying content; it is not redaction. Undo restores the original page boundaries.
-- Download an AES-256 encrypted PDF with an opening password, including pending edits. Passwords stay in the session and are not stored. The working document stays unlocked; use the protection tool for each protected export.
-- Compare selected page positions in two PDFs, including missing pages, extracted text and raster appearance. Show line additions/deletions and visual differences, with a downloadable text report. Image-only pages have visual comparison. This is not semantic page alignment or a guarantee to detect arbitrarily small visual changes.
-- Read Arabic and English scanned PDF pages with self-hosted Tesseract.js, entirely in the browser. Process up to 20 selected pages per operation, cancel processing, and export TXT, text-only DOCX or the original PDF with an invisible OCR text layer. Accuracy and performance depend on source images and the visitor's device. Languages/core are downloaded from this Site and cached locally; no page is sent to an OCR API.
-- Original Arabic invoice, letter and data-form templates use the owner's brand name and colour. Their text and fields remain editable before export.
-- Lossless cleanup/compression and optional JPEG page flattening with explicit consent.
-- Export text to DOCX, pages to PNG ZIP, and images to PDF.
-- Optional PDF-to-link sharing: choose a file or the current document including pending edits, explicitly consent, and create an opaque public URL that serves the PDF bytes directly with inline PDF content disposition, without the site interface or sign-in. The optional /s/[id] viewer remains available, and older viewer links still work. Uploads are limited to 10 MiB, 5 grants per browser per UTC day, 100 grants per site per day, 100 stored files and 256 MiB total reserved storage. Three unfinished uploads can reserve space concurrently; abandoned grants expire after 15 minutes. Ready links persist until deletion by the creator or owner. An HttpOnly browser capability permits creator listing/deletion; HTTPS cookies use SameSite=None, Secure and Partitioned so embedded previews can retain that capability without sharing it across top-level sites. Same-origin write checks remain mandatory; clearing browser cookies loses that capability, but the owner can still delete any file. Shared PDFs are accessible to anyone with the URL and are excluded from indexing. Upload validation checks size, PDF header and EOF, not a malware scan.
-- Owner settings: any HEX or color-picker value for branding, backgrounds, sidebar, canvas and text; preview and reset colors; announcement, file size and maintenance mode.
-- Add, edit, reorder, hide and remove up to 24 custom tools. Functions include PDF page numbering, watermarks, blank-page insertion, crop, protection, comparison, OCR, templates and an HTTPS link. Customize each tool's name, description, icon and color. Links receive no document automatically. New arbitrary processing functions require implementing code; the tool manager does not execute user-supplied code.
-- Settings remain compatible with the original eight-tool configuration and preserve existing branding and visibility.
+Node.js 24.x, Next.js 16, npm with the committed `package-lock.json`. No ChatGPT sign-in or Cloudflare runtime bindings are used by this application.
 
-## Limitations
+```sh
+npm ci
+cp .env.example .env.local
+# For local development, set TURSO_DATABASE_URL=file:local.db in .env.local.
+node scripts/prepare-pdf-assets.mjs
+npm run dev
+```
 
-This is not complete Acrobat parity. XFA, cryptographic signatures, faithful PDF-to-Word layout reconstruction, automatic paragraph reflow and existing-image selection/replacement are not implemented. Visible handwritten signatures are not cryptographic signatures. Editing signed PDFs may invalidate their original digital signatures. Maximum 250 pages and 5–100 MB configurable input size. Memory-intensive conversions depend on the visitor's device. JPEG compression flattens pages and removes search text and interactive fields. An ordinary export has no original encryption; use "حماية PDF" to export a protected copy. Comparison uses page positions and a bounded-resolution raster; OCR text can contain mistakes and should be reviewed.
+Production requires the Turso integration to inject `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`, and a private Vercel Blob store connected with OIDC to inject `BLOB_STORE_ID`. Use free plans only unless the owner explicitly chooses a paid upgrade. Keep production and preview databases/stores separate so preview tests cannot modify live data. Vercel builds fail if the required production bindings are missing.
 
-## Development
+Database tables initialize with idempotent SQL on first access. Site settings use optimistic revision checks; sharing reservations use atomic SQLite transactions. Neither browser-side code nor source archives receive service credentials.
 
-Requires Node 22.18+ and pnpm. Run `pnpm install --frozen-lockfile`. Copy `.env.example` to `.dev.vars` and set `OWNER_EMAIL` to the verified owner's sign-in email. Run `node scripts/prepare-pdf-assets.mjs` and `pnpm dev`. This Vinext application targets Cloudflare Workers, D1 and R2. Generate additional schema migrations with `pnpm db:generate`; never change existing migration files after deployment. Apply generated SQL migrations before starting the application on a new database.
+Vercel project settings: Root Directory `site`, Framework `Next.js`, install `npm ci`, build `npm run build`, Node.js `24.x`. Connect `BEST-W/raqzilo` and select the intended production branch only after staging and validation. Repository edits then deploy through Vercel's Git integration.
 
-Production bindings: D1 `DB`, R2 `FILES`. Runtime secret: `OWNER_EMAIL`. The first verified owner sign-in pins the site-specific authenticated user ID; anonymous visitors and other signed-in users cannot claim administration. Production identity comes only from Sites' authenticated proxy headers; do not expose the worker directly with untrusted `oai-authenticated-*` headers. Self-hosting requires an equivalent trusted identity gateway or replacing `app/chatgpt-auth.ts` with your own verified authentication implementation.
+## Owner administration
 
-Public routes: `/`, `/share`, `/s/[id]`, `/api/shares/[id]/file`, `/api/settings` (GET), `/source.zip`. Owner page: `/admin`. The editor opens administration in a separate tab so the sign-in journey runs outside embedded previews. Anonymous requests render an explicit ChatGPT sign-in page; other accounts see an account-switch link. Settings writes check identity, same-origin requests, schema validation and optimistic concurrency. PDFs never go to the settings API. Sharing uses separate same-origin grant and single-use upload endpoints with capability checks; own-file listing and creator/owner deletion are enforced server-side. No analytics are included.
+Open `/admin` to sign in with the owner's password. Visitors do not see an administration link. The server verifies a hashed, expiring session; identity headers from the old ChatGPT gateway confer no permission.
 
-`node --experimental-strip-types scripts/test-pdf.mjs` tests the document engine; `node --experimental-strip-types scripts/test-owner.mjs` tests owner binding. `node scripts/test-admin-access.cjs` checks the anonymous, denied and owner administration flows. `node scripts/test-customization.cjs` checks settings migration, tools, safe links and API persistence. `node scripts/test-sharing.cjs` exercises actual local D1/R2 upload/read/delete, range requests, creator/owner authorization, quotas and cleanup. `node --experimental-strip-types scripts/test-extra-pdf.mjs` tests new PDF functions with rotation and form preservation. `node scripts/test-page-drag.cjs` checks the page-rail pointer handlers, touch handle, cancellation, keyboard and edge scrolling. `node --experimental-strip-types scripts/test-page-reorder.mjs` checks drag destinations, native page order, pending edits, actual editor move/Undo/export callbacks and AcroForms. `pnpm exec tsc --noEmit` checks types. `scripts/package-source.py` refreshes the public corresponding-source ZIP. Optional browser WebMCP tools expose workspace metadata and page navigation only and are feature-detected.
+First activation requires a private one-use link. In Vercel, set `OWNER_SETUP_TOKEN` to a securely generated 32-byte hexadecimal token (64 characters), and `OWNER_SETUP_EXPIRES` to a future Unix timestamp in milliseconds. Deploy, then privately open `/admin/setup#token=YOUR_TOKEN` and choose a password of 14–128 characters directly on the site. The fragment is removed from browser history and is not sent in a page request. Activation refuses missing, incorrect or expired tokens and refuses replacement of an existing owner. Remove activation variables and redeploy after activation.
+
+Session cookies are HttpOnly, SameSite=Strict and Secure on Vercel. Sign out invalidates the server-side session. Login is rate limited in the database. Settings changes and sharing writes reject cross-origin requests. No public registration or first-visitor owner claim is provided.
+
+If the password is lost, the Vercel/Turso account owner can reset access through the database: delete `owner_sessions`, delete the single `owner_login` row, and issue a fresh expiring activation link. Do not post passwords, activation keys or database credentials in GitHub issues or commit them.
+
+## Sharing
+
+A grant reserves quota before upload. The server authorizes a presigned direct upload to one exact private Blob pathname, limited to PDF, the reserved size and expiry. Direct upload avoids sending a 10 MiB file through a Vercel function request. Completion reads the object, validates size and PDF markers, and marks it ready. Only ready files are served from `/api/shares/[id]/file`; private Blob credentials are never included in public file links.
+
+Limits: 10 MiB per PDF, 5 grants per browser per UTC day, 100 per site per day, 3 unfinished uploads, 100 stored files and 256 MiB reserved storage. Quotas count reserved files as well as ready files. Creator capability cookies authorize own-file listing/deletion; the authenticated owner can list/delete all shares. Anyone holding a share URL can read its PDF. PDF signature checks are not a malware scanner.
+
+Responses preserve UTF-8 filenames, HEAD and single byte ranges. PDF and private routes use no-store/noindex. Deletion hides the file before deleting private storage. Expired unfinished grants are cleaned in bounded batches. No usage analytics are included.
+
+## Migration from the existing Site
+
+Keep the old backend and stable domain active until migration checks pass. Preserve the supplied Google ownership tags, public canonical URL and existing share IDs.
+
+1. Connect free Turso and private Blob resources to the existing Vercel project. Stage a production deployment with `--prod --skip-domain`; do not promote it yet.
+2. Export only `site_settings` and ready `pdf_shares` rows from the trusted existing Site into a private manifest outside Git. For settings, decode `config` into an object and preserve `revision` and `updated_at`. For shares include only `id`, `filename`, `size`, `creator_hash` and `created_at`; do not migrate the old authentication identity or unfinished upload tokens.
+3. Set private, expiring `MIGRATION_TOKEN` and `MIGRATION_EXPIRES` on the candidate. POST the manifest to `/api/migration` using `Authorization: Bearer TOKEN`. The server accepts only that capability, fetches PDFs from the fixed stable domain, validates them and copies them to private storage while preserving public paths and creator hashes. Conflicting rows fail rather than overwrite changes. An interrupted run can resume; a completed import cannot be repeated.
+4. Verify every imported PDF's bytes, filename, HEAD and range responses. Test activation/login/logout, unauthorized requests, settings persistence, actual browser PDF/MD/OCR tools and a new share's complete upload/read/delete cycle on the deployed candidate.
+5. Promote the exact tested candidate to the stable alias, then connect the intended Git production branch. Remove migration/activation variables after use. Retain the earlier gateway deployment for rollback until the independent flow is verified.
+
+Manifest shape (use real private data only outside this repository):
+
+```json
+{"shares":[],"settings":{"config":{},"revision":1,"updated_at":"2026-10-11T00:00:00.000Z"}}
+```
+
+Omit `settings` when the source table is empty. `config` must satisfy the full settings schema; the empty object above is a shape illustration, not an executable import.
+
+## Verification
+
+```sh
+npm test
+npm run build
+npm run test:http
+node scripts/test-bilingual.mjs
+node scripts/test-local-pdf.mjs
+```
+
+The suite covers local SQLite transactions, owner/creator permissions, expiring activation, password hashing, quotas, scoped direct uploads, validation/cleanup, settings persistence/conflicts, language preference, PDF editing/redaction/page order, Arabic text, Markdown detection and OCR fallback. The HTTP suite exercises the built Next app with a temporary local database and fixture credentials. These checks do not substitute for real deployed Turso/Blob and browser verification.
 
 ## License and corresponding source
 
-This application is licensed under GNU AGPL-3.0 (see `LICENSE`). Users can download its corresponding source from the running site's `/source.zip` link. The archive includes application source, configuration templates, migrations, build scripts, fonts and version-locked dependency installation instructions, but excludes runtime secrets and generated build output. Follow AGPL requirements when redistributing or running modified versions.
+GNU AGPL-3.0; see `LICENSE`. `/source.zip` is generated during build and contains the corresponding application source, configuration templates, fonts and locked installation instructions, excluding credentials and generated vendor files. Preserve all third-party license notices.
 
-MuPDF JavaScript 1.28.1 is used for PDF rendering and redaction and is licensed under AGPL-3.0. It is self-hosted from the exact npm package; no document data is sent to Artifex. Complete MuPDF JavaScript source: https://github.com/ArtifexSoftware/mupdf.js (release matching the package version). MuPDF C engine and dependency source: https://mupdf.com/releases/ and https://github.com/ArtifexSoftware/mupdf. The unmodified upstream package and its license are available through `pnpm install --frozen-lockfile`.
+MuPDF JavaScript is self-hosted from the locked npm package, with source at https://github.com/ArtifexSoftware/mupdf.js and https://github.com/ArtifexSoftware/mupdf. MuPDF and the application are AGPL-3.0. The unmodified package and notices are obtained through `npm ci`.
 
-pdf-lib 1.17.1, @pdf-lib/fontkit 1.1.1, docx 9.7.2 and fflate 0.8.3 are MIT-licensed. DejaVu Sans font licensing is in `public/licenses/DejaVu.txt`. MuPDF licensing is in `public/licenses/MuPDF-AGPL-3.0.txt`. Preserve those notices when sharing the project. Other frontend/runtime dependencies and their versions are pinned in `pnpm-lock.yaml`; their upstream notices are included by the package manager.
-
-Tesseract.js 6.0.1, Tesseract.js-core and the Arabic/English trained data are open source under Apache-2.0. The Tesseract notice is included in `public/licenses/Tesseract-Apache-2.0.txt`. `prepare-pdf-assets.mjs` obtains the unmodified runtime and language assets from the locked npm packages. The optional fundraising postinstall script is disabled; no paid service or API key is used. Run `node scripts/test-local-pdf.mjs` for crop, encryption, comparison, forms, OCR layer and template checks.
+pdf-lib, @pdf-lib/fontkit, docx and fflate are MIT-licensed. Font notices are in `public/licenses/DejaVu.txt`. Tesseract.js, its core and Arabic/English data are Apache-2.0; the notice is in `public/licenses/Tesseract-Apache-2.0.txt`. `prepare-pdf-assets.mjs` self-hosts their locked runtime/language assets without a paid OCR or AI service.

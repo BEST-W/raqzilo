@@ -8,7 +8,7 @@ export type PageInfo = {width:number;height:number};
 export type FieldInfo = {page:number;name:string;value:string;kind:string;options:string[];required:boolean};
 let enginePromise:Promise<typeof MuPDF>|null=null;
 export function getEngine() {
-  if(!enginePromise){const url="/vendor/mupdf/mupdf.js";enginePromise=import(/* @vite-ignore */ url).catch(e=>{enginePromise=null;throw e;});}
+  if(!enginePromise){const url="/vendor/mupdf/mupdf.js";enginePromise=import(/* webpackIgnore: true */ url).catch(e=>{enginePromise=null;throw e;});}
   return enginePromise;
 }
 export function installEngineForTests(engine:typeof MuPDF){enginePromise=Promise.resolve(engine);}

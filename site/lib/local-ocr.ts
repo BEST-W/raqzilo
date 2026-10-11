@@ -25,7 +25,7 @@ export async function recognizePdf(bytes:Bytes,indices:number[],language:OcrLang
     progress("تجهيز قارئ النصوص على جهازك…",0);
     const url="/vendor/ocr/tesseract.esm.min.js";
     // The browser distribution exposes Tesseract through its default ESM export.
-    const loaded=await import(/* @vite-ignore */ url) as {default?:typeof import("tesseract.js")}&Partial<typeof import("tesseract.js")>;
+    const loaded=await import(/* webpackIgnore: true */ url) as {default?:typeof import("tesseract.js")}&Partial<typeof import("tesseract.js")>;
     const tesseract=(loaded.default||loaded) as typeof import("tesseract.js");
     const creating=tesseract.createWorker(language,1,{
       workerPath:location.origin+"/vendor/ocr/worker.min.js",corePath:location.origin+"/vendor/ocr/core",langPath:location.origin+"/vendor/ocr/lang",

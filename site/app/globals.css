@@ -1,4 +1,12 @@
 @import "tailwindcss";
+
+.owner-access { min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
+.owner-login { width: min(100%, 400px); display: grid; gap: 20px; padding: 28px; background: var(--background, white); border: 1px solid #dbe1e9; border-radius: 20px; }
+.owner-login h1 { font-size: 24px; font-weight: 700; }
+.owner-login label { display: grid; gap: 8px; }
+.owner-login input { border: 1px solid #b4bfcc; border-radius: 8px; padding: 12px; }
+.owner-login button { padding: 12px; border-radius: 8px; cursor: pointer; }
+.owner-logout { position: absolute; top: 12px; inset-inline-end: 20px; z-index: 10; }
 @import "tw-animate-css";
 @import "../vendor/shadcn-tailwind-4.13.0.css";
 @font-face{font-family:Mustanad;src:url('/fonts/DejaVuSans.ttf') format('truetype');font-weight:400;font-display:swap}

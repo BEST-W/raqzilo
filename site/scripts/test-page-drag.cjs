@@ -5,7 +5,7 @@ const code=ts.transpileModule(fs.readFileSync('components/page-rail.tsx','utf8')
 const hooks=[];let cursor=0,nextFrame=0;const frames=new Map();
 const hookReact={useRef(value){const index=cursor++;return hooks[index]??(hooks[index]={current:value});},useState(value){const index=cursor++;if(!(index in hooks))hooks[index]=value;return[hooks[index],next=>{hooks[index]=typeof next==='function'?next(hooks[index]):next;}];},useEffect(){},useId(){return'page-help';}};
 const Button=()=>null;
-const mocks={'react':hookReact,'@/components/ui/button':{Button},'@/lib/page-order':modelModule.exports};
+const mocks={'react':hookReact,'@/components/ui/button':{Button},'@/lib/page-order':modelModule.exports,'@/components/language-provider':{useLanguage:()=>({language:'en',t:value=>value})}};
 const moduleValue={exports:{}};
 vm.runInNewContext(code,{module:moduleValue,exports:moduleValue.exports,window:{innerWidth:1200,innerHeight:900},requestAnimationFrame:fn=>{const id=++nextFrame;frames.set(id,fn);return id;},cancelAnimationFrame:id=>frames.delete(id),setTimeout,clearTimeout,require:name=>Object.hasOwn(mocks,name)?mocks[name]:require(name)});
 const PageRail=moduleValue.exports.default,moves=[],selections=[];

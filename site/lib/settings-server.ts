@@ -1,11 +1,9 @@
-import { env } from "cloudflare:workers";
-import { resolveOwner } from "./owner-policy";
-import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { database } from "./database";
+import { getOwnerUser } from "./owner-auth";
 import { defaultSettings, settingsSchema, type Settings } from "./settings-model";
 import { brand } from "./brand";
 function db() {
-  if (!env.DB) throw new Error("قاعدة إعدادات الموقع غير متاحة الآن.");
-  return env.DB;
+  return database;
 }
 export async function readSettings(): Promise<{ settings: Settings; revision: number; updatedAt: string | null }> {
   const row = await db().prepare("SELECT config, revision, updated_at FROM site_settings WHERE id = ?").bind("main").first<{config:string; revision:number; updated_at:string}>();
@@ -18,9 +16,8 @@ export async function readSettings(): Promise<{ settings: Settings; revision: nu
   return { settings, revision: row.revision, updatedAt: row.updated_at };
 }
 export async function ownerStatus() {
-  const user = await getChatGPTUser();
-  if (!user) return { user: null, allowed: false };
-  return { user, allowed: await resolveOwner(db(), user, env.OWNER_EMAIL) };
+  const user = await getOwnerUser();
+  return { user, allowed: !!user };
 }
 export async function writeSettings(settings: Settings, expectedRevision: number) {
   const now = new Date().toISOString();

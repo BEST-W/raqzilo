@@ -1,6 +1,7 @@
 import { readSettings, writeSettings, ownerStatus } from "@/lib/settings-server";
 import { settingsSchema } from "@/lib/settings-model";
 import { z } from "zod";
+import { isSameOrigin } from "@/lib/request-origin";
 export const dynamic = "force-dynamic";
 const noCache = { "Cache-Control": "no-store" };
 export async function GET() {
@@ -8,8 +9,7 @@ export async function GET() {
   catch { return Response.json({error:"تعذر قراءة إعدادات الموقع."}, {status:503, headers:noCache}); }
 }
 export async function PUT(request: Request) {
-  const origin = request.headers.get("origin");
-  if (!origin || origin !== new URL(request.url).origin) return Response.json({error:"طلب غير مسموح."}, {status:403});
+  if (!isSameOrigin(request)) return Response.json({error:"طلب غير مسموح."}, {status:403});
   try {
     const owner = await ownerStatus();
     if (!owner.allowed) return Response.json({error:"هذه الإعدادات خاصة بمالك الموقع."}, {status:403});

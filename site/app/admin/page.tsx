@@ -1,14 +1,11 @@
-import { getChatGPTUser, chatGPTSignInPath, chatGPTSignOutPath } from "@/app/chatgpt-auth";
 import { ownerStatus, readSettings } from "@/lib/settings-server";
 import AdminPanel from "@/components/admin-panel";
-import AdminAccess from "@/components/admin-access";
+import OwnerLogin, { OwnerLogout } from "@/components/owner-login";
 export const dynamic = "force-dynamic";
-export const metadata = {robots:{index:false,follow:false}};
+export const metadata = {robots:{index:false,follow:false},referrer:"no-referrer" as const};
 export default async function AdminPage() {
-  const user = await getChatGPTUser();
-  if (!user) return <AdminAccess reason="signin" signInHref={chatGPTSignInPath("/admin")} />;
-  const { allowed } = await ownerStatus();
-  if (!allowed) return <AdminAccess reason="denied" signOutHref={chatGPTSignOutPath("/admin")} />;
+  const { user, allowed } = await ownerStatus();
+  if (!allowed || !user) return <OwnerLogin />;
   const data = await readSettings();
-  return <AdminPanel initial={data.settings} initialRevision={data.revision} ownerName={user.displayName} />;
+  return <><OwnerLogout /><AdminPanel initial={data.settings} initialRevision={data.revision} ownerName={user.displayName} /></>;
 }

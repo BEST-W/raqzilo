@@ -21,6 +21,12 @@ vercel/public/health.json
 **/.dev.vars*
 **/*.pem
 **/*.key
+**/*.db
+**/*.db-*
+**/*.sqlite
+**/*.sqlite-*
+**/*.sqlite3
+**/*.sqlite3-*
 **/outputs/
 **/work/
 

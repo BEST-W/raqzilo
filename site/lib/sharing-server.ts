@@ -1,4 +1,8 @@
-import { env } from "cloudflare:workers";
+import { database } from "./database";
+import { files } from "./file-storage";
+import { isSameOrigin } from "./request-origin";
+import { issueSignedToken } from "@vercel/blob";
+import { handleUploadPresigned, type HandleUploadPresignedBody } from "@vercel/blob/client";
 import { ownerStatus, readSettings } from "./settings-server";
 import { SHARE_COOKIE, SHARE_MAX_BYTES, SHARE_STORAGE_BYTES, SHARE_MAX_FILES, type SharedFile } from "./sharing-model";
 
@@ -6,8 +10,7 @@ type Row = { id: string; filename: string; size: number; creator_hash: string; u
 export class ShareError extends Error { constructor(public status: number, message: string) { super(message); } }
 export const shareHeaders = { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer" };
 function stores() {
-  if (!env.DB || !env.FILES) throw new ShareError(503, "مشاركة الملفات غير متاحة الآن. حاول لاحقاً.");
-  return { db: env.DB, files: env.FILES };
+  return { db: database, files };
 }
 function token() { return Array.from(crypto.getRandomValues(new Uint8Array(32)), n => n.toString(16).padStart(2, "0")).join(""); }
 async function hash(value: string) { return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))), n => n.toString(16).padStart(2, "0")).join(""); }
@@ -19,7 +22,7 @@ function key(id: string) { return "pdf-shares/" + id + ".pdf"; }
 function validId(id: string) { if (!/^[a-f0-9]{32}$/.test(id)) throw new ShareError(404, "هذا الرابط غير متاح أو تم حذف الملف."); }
 function publicFile(row: Row): SharedFile { return { id: row.id, filename: row.filename, size: row.size, createdAt: row.created_at, path: "/api/shares/" + row.id + "/file" }; }
 export function sameOrigin(request: Request) {
-  if (request.headers.get("origin") !== new URL(request.url).origin) throw new ShareError(403, "طلب غير مسموح.");
+  if (!isSameOrigin(request)) throw new ShareError(403, "طلب غير مسموح.");
 }
 async function enabled() {
   const { settings } = await readSettings();
@@ -78,30 +81,51 @@ export async function createShare(request: Request) {
   if (!inserted[0].meta.changes) throw new ShareError(429, "وصلت المشاركة إلى الحد المتاح. احذف ملفات قديمة أو حاول لاحقاً.");
   // Embedded previews are cross-site frames. Partition this capability by the
   // top-level site, while keeping it HttpOnly and retaining same-origin writes.
-  const cookiePolicy = new URL(request.url).protocol === "https:" ? "; SameSite=None; Secure; Partitioned" : "; SameSite=Lax";
+  const cookiePolicy = process.env.VERCEL || new URL(request.url).protocol === "https:" ? "; SameSite=None; Secure; Partitioned" : "; SameSite=Lax";
   return Response.json({ id, uploadToken }, { headers: { ...shareHeaders, "Set-Cookie": `${SHARE_COOKIE}=${secret}; Path=/; Max-Age=31536000; HttpOnly${cookiePolicy}` } });
 }
-export async function uploadShare(request: Request, id: string) {
-  sameOrigin(request); await enabled(); validId(id); const { db, files } = stores();
+async function grantRow(request: Request, id: string) {
+  sameOrigin(request); await enabled(); validId(id); const { db } = stores();
   const secret = device(request); const grant = request.headers.get("x-upload-token");
   if (!secret || !grant || !/^[a-f0-9]{64}$/.test(grant)) throw new ShareError(403, "طلب الرفع غير مسموح. أعد اختيار الملف.");
   const row = await db.prepare("SELECT * FROM pdf_shares WHERE id = ?").bind(id).first<Row>();
   if (!row || row.creator_hash !== await hash(secret) || row.upload_hash !== await hash(grant) || row.upload_expires <= Date.now()) throw new ShareError(403, "انتهت صلاحية الرفع. حاول مرة أخرى.");
-  const claimed = await db.prepare("UPDATE pdf_shares SET status = 'uploading' WHERE id = ? AND status = 'pending' AND upload_expires > ?").bind(id, Date.now()).run();
-  if (!claimed.meta.changes) throw new ShareError(409, "طلب الرفع مستخدم بالفعل. راجع ملفاتك المشتركة.");
+  return row;
+}
+export async function authorizeBlobUpload(request: Request) {
+  sameOrigin(request);
+  const body = JSON.parse(new TextDecoder().decode(await boundedBody(request, 4096))) as HandleUploadPresignedBody;
+  if (body.type !== "blob.generate-presigned-url") throw new ShareError(400, "طلب غير مسموح.");
+  const response = await handleUploadPresigned({ request, body, getSignedToken: async (pathname, clientPayload, multipart) => {
+    if (typeof clientPayload !== "string") throw new ShareError(403, "طلب غير مسموح.");
+    const row = await grantRow(request, clientPayload);
+    if (multipart || pathname !== key(row.id) || row.status !== "pending") throw new ShareError(403, "طلب غير مسموح.");
+    const claimed = await database.prepare("UPDATE pdf_shares SET status = 'uploading' WHERE id = ? AND status = 'pending' AND upload_expires > ?").bind(row.id, Date.now()).run();
+    if (!claimed.meta.changes) throw new ShareError(409, "طلب الرفع مستخدم بالفعل. راجع ملفاتك المشتركة.");
+    const signedToken = await issueSignedToken({ pathname, operations: ["put"], allowedContentTypes: ["application/pdf"], maximumSizeInBytes: row.size, validUntil: row.upload_expires });
+    return { token: signedToken, urlOptions: { validUntil: row.upload_expires, allowedContentTypes: ["application/pdf"], maximumSizeInBytes: row.size, addRandomSuffix: false, allowOverwrite: false } };
+  } });
+  return Response.json(response, { headers: shareHeaders });
+}
+export async function uploadShare(request: Request, id: string) {
+  const row = await grantRow(request, id); const { db, files } = stores();
+  if (row.status !== "uploading") throw new ShareError(409, "طلب الرفع مستخدم بالفعل. راجع ملفاتك المشتركة.");
   try {
-    const data = await boundedBody(request, SHARE_MAX_BYTES);
+    const object = await files.get(key(id));
+    if (!object || object.size !== row.size) throw new ShareError(400, "حجم الملف لا يطابق طلب الرفع. حاول مرة أخرى.");
+    const data = await boundedBody(new Request("https://storage.local/", { method: "POST", body: object.body as BodyInit, duplex: "half" } as RequestInit), SHARE_MAX_BYTES);
     if (data.byteLength !== row.size) throw new ShareError(400, "حجم الملف لا يطابق طلب الرفع. حاول مرة أخرى.");
     const header = new TextDecoder("latin1").decode(data.subarray(0, 1024));
     const ending = new TextDecoder("latin1").decode(data.subarray(Math.max(0, data.length - 4096)));
     if (!/%PDF-[12]\.\d/.test(header) || !ending.includes("%%EOF")) throw new ShareError(400, "اختر ملف PDF صالحاً.");
-    const stored = await files.put(key(id), data, { httpMetadata: { contentType: "application/pdf", cacheControl: "no-store" } });
-    if (!stored) throw new Error("R2_PUT_FAILED");
     const ready = await db.prepare("UPDATE pdf_shares SET status = 'ready', upload_hash = '' WHERE id = ? AND status = 'uploading' AND upload_expires > ?").bind(id, Date.now()).run();
     if (!ready.meta.changes) throw new ShareError(409, "تعذر إكمال الرفع. حاول مرة أخرى.");
     return Response.json({ file: publicFile(row) }, { headers: shareHeaders });
   } catch (error) {
-    try { await files.delete(key(id)); await db.prepare("DELETE FROM pdf_shares WHERE id = ? AND status != 'ready'").bind(id).run(); }
+    try {
+      const latest = await db.prepare("SELECT status FROM pdf_shares WHERE id = ?").bind(id).first<{ status: string }>();
+      if (latest?.status !== "ready") { await files.delete(key(id)); await db.prepare("DELETE FROM pdf_shares WHERE id = ? AND status != 'ready'").bind(id).run(); }
+    }
     catch { console.error("Failed to clean an incomplete PDF share"); }
     throw error;
   }
@@ -151,7 +175,7 @@ export async function serveSharedFile(request: Request, id: string) {
   const encoded = encodeURIComponent(meta.filename).replace(/[!'()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
   const headers = new Headers({ ...shareHeaders, "Content-Type": "application/pdf", "X-Content-Type-Options": "nosniff", "Content-Disposition": `${disposition}; filename="document.pdf"; filename*=UTF-8''${encoded}`, "Content-Length": String(partial?.length ?? object.size), "Accept-Ranges": "bytes", ETag: object.httpEtag, "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'" });
   if (partial) headers.set("Content-Range", `bytes ${partial.offset}-${partial.offset + partial.length - 1}/${meta.size}`);
-  return new Response(request.method === "HEAD" ? null : (object as R2ObjectBody).body, { status: partial ? 206 : 200, headers });
+  return new Response(request.method === "HEAD" ? null : (object as Awaited<ReturnType<typeof files.get>>)?.body as BodyInit | null, { status: partial ? 206 : 200, headers });
 }
 export function shareFailure(error: unknown) {
   if (error instanceof ShareError) return Response.json({ error: error.message }, { status: error.status, headers: shareHeaders });

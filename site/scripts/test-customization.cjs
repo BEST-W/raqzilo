@@ -6,10 +6,10 @@ const {DatabaseSync}=require('node:sqlite');
 function compile(file,mocks={}){
  const code=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText;
  const module={exports:{}};
- vm.runInNewContext(code,{module,exports:module.exports,Error,URL,Headers,Request,Response,require:name=>Object.hasOwn(mocks,name)?mocks[name]:require(name)},{filename:file});
+ vm.runInNewContext(code,{module,exports:module.exports,Error,URL,Headers,Request,Response,process,require:name=>Object.hasOwn(mocks,name)?mocks[name]:require(name)},{filename:file});
  return module.exports;
 }
-const model=compile('lib/settings-model.ts');
+const model=compile('lib/settings-model.ts',{'./brand':compile('lib/brand.ts')});
 const {settingsSchema,defaultSettings,getToolEntries,moveTool,readableForeground}=model;
 const oldSettings=JSON.parse(JSON.stringify(defaultSettings));
 delete oldSettings.theme;delete oldSettings.customTools;delete oldSettings.toolOrder;
@@ -38,12 +38,12 @@ assert.equal(settingsSchema.safeParse({...custom,toolOrder:['edit','edit']}).suc
 assert.equal(settingsSchema.safeParse({...custom,toolOrder:['unknown']}).success,false);
 assert.equal(settingsSchema.safeParse({...custom,theme:{...custom.theme,canvas:'red'}}).success,false);
 const sqlite=new DatabaseSync(':memory:');
-sqlite.exec(fs.readFileSync('drizzle/0000_uneven_owl.sql','utf8').replaceAll('--> statement-breakpoint',''));
+sqlite.exec('CREATE TABLE site_settings (id TEXT PRIMARY KEY, config TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL)');
 sqlite.prepare('INSERT INTO site_settings (id,config,revision,updated_at) VALUES (?,?,?,?)').run('main',JSON.stringify(oldSettings),1,'2026-10-04');
 const binding={prepare(sql){const statement=sqlite.prepare(sql);return{bind(...args){return{async first(){return statement.get(...args)||null;},async run(){const result=statement.run(...args);return{meta:{changes:Number(result.changes)}};}};}};}};
-const server=compile('lib/settings-server.ts',{'cloudflare:workers':{env:{DB:binding}},'./settings-model':model,'./owner-policy':{resolveOwner:async()=>false},'@/app/chatgpt-auth':{getChatGPTUser:async()=>null}});
+const server=compile('lib/settings-server.ts',{'./database':{database:binding},'./settings-model':model,'./brand':compile('lib/brand.ts'),'./owner-auth':{getOwnerUser:async()=>null}});
 let allowed=true;
-const route=compile('app/api/settings/route.ts',{'@/lib/settings-model':model,'@/lib/settings-server':{...server,ownerStatus:async()=>({allowed})}});
+const route=compile('app/api/settings/route.ts',{'@/lib/request-origin':compile('lib/request-origin.ts'),'@/lib/settings-model':model,'@/lib/settings-server':{...server,ownerStatus:async()=>({allowed})}});
 const origin='https://pdf.example.test';
 const put=(settings,revision,requestOrigin=origin)=>route.PUT(new Request(origin+'/api/settings',{method:'PUT',headers:{'content-type':'application/json',origin:requestOrigin},body:JSON.stringify({settings,revision})}));
 (async()=>{
