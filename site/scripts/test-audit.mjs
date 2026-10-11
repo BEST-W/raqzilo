@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import * as mupdf from 'mupdf';
 import {PDFDocument, StandardFonts, degrees} from 'pdf-lib';
+import {unzipSync,strFromU8} from 'fflate';
 import * as engine from '../lib/pdf-engine.ts';
 
 engine.installEngineForTests(mupdf);
@@ -33,3 +34,33 @@ try{
  assert((await engine.renderPage(flattened,0)).lines.some(line=>line.text.includes('Audit client 456')),'the form appearance must keep English and numbers readable');
 }finally{native.destroy();}
 console.log('PASS: Arabic/Persian page ranges select the correct real PDF pages, malformed ranges rejected, mixed Arabic/English/numbers survive export on upright and rotated pages, Word export');
+
+// Redaction must remove newly added content and the underlying AcroForm value,
+// including on rotated pages. Preserve unrelated text and fields.
+const redactionPdf=await PDFDocument.create();
+for(const angle of [0,90,180,270])redactionPdf.addPage([595,842]).setRotation(degrees(angle));
+const redactionSource=await redactionPdf.save();
+const privateMarks=Array.from({length:4},(_,page)=>({id:'secret-'+page,page,kind:'text',text:'PRIVATE_ADDITION_'+page,x:.12,y:.35,w:.65,h:.09,size:18,color:'#000000'}));
+const publicMarks=Array.from({length:4},(_,page)=>({...privateMarks[page],id:'keep-'+page,y:.7,text:'KEEP_ADDITION_'+page}));
+const formMarks=privateMarks.map(mark=>({...mark,id:'private-field-'+mark.page,kind:'field',fieldKind:'text',name:'private_field_'+mark.page,text:'PRIVATE_FORM_VALUE_'+mark.page}));
+const publicForm={...formMarks[0],id:'public-field',name:'public_field',text:'KEEP_FORM_VALUE',y:.85};
+const redactions=privateMarks.map(mark=>({...mark,id:'redact-'+mark.page,kind:'redact',text:undefined,x:.1,y:.32,w:.72,h:.15}));
+const existingForms=await engine.applyMarks(redactionSource,[...formMarks,publicForm]);
+for(const pending of [[...privateMarks,...publicMarks,...redactions],[...redactions,...privateMarks,...publicMarks]]){
+  const output=await engine.applyMarks(existingForms,pending);
+  for(let page=0;page<4;page++){
+    const text=(await engine.renderPage(output,page)).lines.map(line=>line.text).join('\n');
+    assert(!text.includes('PRIVATE_'),'redaction must remove the pending text on rotation '+page);
+    assert(text.includes('KEEP_ADDITION_'+page),'unredacted additions must survive');
+  }
+  const remaining=await engine.readFields(output);
+  assert.deepEqual(remaining.map(field=>[field.name,field.value]),[['public_field','KEEP_FORM_VALUE']]);
+  const fields=(await PDFDocument.load(output)).getForm().getFields();
+  assert(!fields.some(field=>field.getName().startsWith('private_')),'redacted values must be removed from the actual AcroForm');
+  const wordXml=strFromU8(unzipSync(await engine.toWord(output,'Redaction audit'))['word/document.xml']);
+  assert(!wordXml.includes('PRIVATE_'),'Word export must not restore redacted private text');
+  assert(wordXml.includes('KEEP_ADDITION_0'));
+}
+const newlyAddedFields=await engine.applyMarks(redactionSource,[...formMarks,publicForm,...redactions]);
+assert.deepEqual((await engine.readFields(newlyAddedFields)).map(field=>field.name),['public_field']);
+console.log('PASS: redaction removes pending text in either mark order, existing and newly added AcroForm values on all four rotations; unrelated content and fields survive');

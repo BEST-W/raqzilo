@@ -49,8 +49,32 @@ let fontPromise:Promise<Bytes>|null=null;
 async function fontBytes(){if(!fontPromise)fontPromise=fetch("/fonts/DejaVuSans.ttf").then(r=>{if(!r.ok)throw new Error("تعذر تحميل الخط.");return r.arrayBuffer();}).then(b=>new Uint8Array(b));return fontPromise;}
 let testFont:Bytes|undefined;
 export function installFontForTests(bytes:Bytes){testFont=bytes;}
+async function redactOutput(bytes:Bytes,redactions:Mark[]) {
+  if(!redactions.length)return bytes;
+  const m=await getEngine();const hiddenFields=new Set<string>();const source=document(m,bytes);
+  try{
+    for(const index of new Set(redactions.map(mark=>mark.page))){const page=source.loadPage(index);try{
+      const bounds=page.getBounds(),boxes=redactions.filter(mark=>mark.page===index).map(mark=>rect(mark,bounds));
+      for(const widget of page.getWidgets()){try{
+        const area=widget.getRect();if(boxes.some(box=>Math.max(area[0],box[0])<Math.min(area[2],box[2])&&Math.max(area[1],box[1])<Math.min(area[3],box[3])))hiddenFields.add(widget.getName());
+      }finally{widget.destroy();}}
+    }finally{page.destroy();}}
+  }finally{source.destroy();}
+  // A black rectangle can hide a widget while leaving its private value in the
+  // AcroForm. Remove intersecting fields, including any copies of that field.
+  let input=bytes;
+  if(hiddenFields.size){const {PDFDocument}=await import("pdf-lib");const pdf=await PDFDocument.load(input),form=pdf.getForm();for(const name of hiddenFields){const field=form.getFieldMaybe(name);if(!field)continue;const widgetRefs=field.acroField.getWidgets().map(widget=>pdf.context.getObjectRef(widget.dict));form.removeField(field);for(const page of pdf.getPages())for(const ref of widgetRefs)if(ref)page.node.removeAnnot(ref);}input=await pdf.save({updateFieldAppearances:false});}
+  const doc=document(m,input);
+  try{
+    for(const index of new Set(redactions.map(mark=>mark.page))){const page=doc.loadPage(index);try{
+      const bounds=page.getBounds();for(const mark of redactions.filter(mark=>mark.page===index)){const annotation=page.createAnnotation("Redact");try{annotation.setRect(rect(mark,bounds));annotation.update();page.applyRedactions(true,m.PDFPage.REDACT_IMAGE_PIXELS,m.PDFPage.REDACT_LINE_ART_REMOVE_IF_TOUCHED,m.PDFPage.REDACT_TEXT_REMOVE);}finally{annotation.destroy();}}
+    }finally{page.destroy();}}
+    return save(doc);
+  }finally{doc.destroy();}
+}
 export async function applyMarks(bytes:Bytes,marks:Mark[]) {
   if(!marks.length)return bytes;
+  const redactions=marks.filter(mark=>mark.kind==="redact");
   const m=await getEngine();const doc=document(m,bytes);const transforms=new Map<number,{inverse:MuPDF.Matrix;bounds:MuPDF.Rect;rotation:number}>();
   let normalized:Bytes;
   try{
@@ -58,9 +82,9 @@ export async function applyMarks(bytes:Bytes,marks:Mark[]) {
       const b=page.getBounds();const rotateObj=page.getObject().getInheritable("Rotate");const rotation=rotateObj.asNumber()||0;rotateObj.destroy();
       transforms.set(index,{inverse:m.Matrix.invert(page.getTransform()),bounds:b,rotation});
       const selected=marks.filter(x=>x.page===index);
-      for(const mark of selected.filter(x=>x.kind==="replace"||x.kind==="redact")){
-        const a=page.createAnnotation("Redact");a.setRect(rect(mark.kind==="replace"?(mark.source||mark):mark,b));a.update();
-        page.applyRedactions(mark.kind==="redact",m.PDFPage.REDACT_IMAGE_PIXELS,m.PDFPage.REDACT_LINE_ART_REMOVE_IF_TOUCHED,m.PDFPage.REDACT_TEXT_REMOVE);a.destroy();
+      for(const mark of selected.filter(x=>x.kind==="replace")){
+        const a=page.createAnnotation("Redact");a.setRect(rect(mark.source||mark,b));a.update();
+        page.applyRedactions(false,m.PDFPage.REDACT_IMAGE_PIXELS,m.PDFPage.REDACT_LINE_ART_REMOVE_IF_TOUCHED,m.PDFPage.REDACT_TEXT_REMOVE);a.destroy();
       }
       for(const mark of selected){
         if(mark.kind==="replace"){
@@ -78,7 +102,7 @@ export async function applyMarks(bytes:Bytes,marks:Mark[]) {
     normalized=save(doc);
   }finally{doc.destroy();}
   const textMarks=marks.filter(x=>x.kind==="text"||x.kind==="replace"||x.kind==="field");
-  if(!textMarks.length)return normalized;
+  if(!textMarks.length)return redactOutput(normalized,redactions);
   const [{PDFDocument,rgb:pdfRgb,degrees},fontkit]=await Promise.all([import("pdf-lib"),import("@pdf-lib/fontkit")]);
   const pdf=await PDFDocument.load(normalized);pdf.registerFontkit(bidirectionalFontkit(fontkit.default));
   const font=await pdf.embedFont(testFont||await fontBytes(),{subset:true});
@@ -107,7 +131,7 @@ export async function applyMarks(bytes:Bytes,marks:Mark[]) {
       }
     }
   }
-  return pdf.save({updateFieldAppearances:false});
+  return redactOutput(await pdf.save({updateFieldAppearances:false}),redactions);
 }
 export async function reorder(bytes:Bytes,indices:number[]){
   const m=await getEngine();const doc=document(m,bytes);

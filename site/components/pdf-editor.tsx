@@ -212,8 +212,8 @@ export default function Editor({ settings, isOwner = false }: {
         else
             throw e;
     } }); }
-    async function changeBytes(data: Bytes, prior?: Bytes) { const info = await engine.inspect(data); const previous = prior || bytes; if (previous)
-        setHistory(h => [...h, { bytes: previous, marks: prior ? [] : marks, page, dirty, afterMarks: [] }].slice(-4)); setBytes(data); setPages(info); setPage(p => Math.min(p, info.length - 1)); setMarks([]); setSelected(null); setDirty(true); }
+    async function changeBytes(data: Bytes, prior?: Bytes) { const info = await engine.inspect(data); const currentFields = category === "forms" ? await engine.readFields(data) : []; const previous = prior || bytes; if (previous)
+        setHistory(h => [...h, { bytes: previous, marks: prior ? [] : marks, page, dirty, afterMarks: [] }].slice(-4)); setBytes(data); setPages(info); setPage(p => Math.min(p, info.length - 1)); setMarks([]); setSelected(null); setFields(currentFields); setValues(Object.fromEntries(currentFields.map(field => [field.name, field.value]))); setDirty(true); }
     async function applied() { if (!bytes)
         throw new Error(t("افتح مستنداً أولاً.")); return engine.applyMarks(bytes, marks); }
     async function exportPdf() { await run(t("تجهيز النسخة المعدّلة…"), async () => { const output = await applied(); engine.download(output, base + t("-معدّل.pdf")); if (marks.length)
@@ -350,7 +350,7 @@ export default function Editor({ settings, isOwner = false }: {
             return;
         await run(t("تغيير ترتيب الصفحات…"), async () => {
             const order = movedPageOrder(pages.length, from, to), afterMarks = remapPageMarks(marks, order);
-            const output = await engine.reorder(bytes, order), info = await engine.inspect(output);
+            const output = await engine.reorder(bytes, order), info = await engine.inspect(output), currentFields = category === "forms" ? await engine.readFields(output) : [];
             setHistory(h => [...h, { bytes, marks, page, dirty, afterMarks }].slice(-4));
             setBytes(output);
             setPages(info);
@@ -358,8 +358,8 @@ export default function Editor({ settings, isOwner = false }: {
             setMarks(afterMarks);
             setSelected(null);
             setQuery("");
-            setFields([]);
-            setValues({});
+            setFields(currentFields);
+            setValues(Object.fromEntries(currentFields.map(field => [field.name, field.value])));
             setDirty(true);
             setStatus({ text: t("نُقلت الصفحة {0} إلى الموضع {1}. نزّل PDF لحفظ الترتيب.", { "0": from + 1, "1": to + 1 }) });
         });
@@ -385,7 +385,7 @@ export default function Editor({ settings, isOwner = false }: {
         throw new Error(t("أبعاد الصورة كبيرة جداً."));
     } const canvas = document.createElement("canvas"); const scale = Math.min(1, 1800 / Math.max(bitmap.width, bitmap.height)); canvas.width = bitmap.width * scale; canvas.height = bitmap.height * scale; canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close(); const w = .3, h = Math.min(.4, w * (canvas.height / canvas.width) * (pageInfo.width / pageInfo.height)); addMark({ kind: "image", image: canvas.toDataURL("image/png"), x: .35, y: .35, w, h }); setTool("select"); }); }
     async function undo() { const previous = history[history.length - 1]; const documentWasLast = previous && marks.length === previous.afterMarks.length && marks.every((mark, index) => mark === previous.afterMarks[index]); if (previous && (documentWasLast || !marks.length)) {
-        await run(t("التراجع…"), async () => { const info = await engine.inspect(previous.bytes); setHistory(h => h.slice(0, -1)); setBytes(previous.bytes); setPages(info); setPage(Math.min(previous.page, info.length - 1)); setMarks(previous.marks); setSelected(null); setFields([]); setValues({}); setQuery(""); setDirty(previous.dirty); setStatus({ text: t("تم التراجع عن العملية الأخيرة.") }); });
+        await run(t("التراجع…"), async () => { const info = await engine.inspect(previous.bytes), currentFields = category === "forms" ? await engine.readFields(previous.bytes) : []; setHistory(h => h.slice(0, -1)); setBytes(previous.bytes); setPages(info); setPage(Math.min(previous.page, info.length - 1)); setMarks(previous.marks); setSelected(null); setFields(currentFields); setValues(Object.fromEntries(currentFields.map(field => [field.name, field.value]))); setQuery(""); setDirty(previous.dirty); setStatus({ text: t("تم التراجع عن العملية الأخيرة.") }); });
     }
     else if (marks.length) {
         setMarks(ms => ms.slice(0, -1));
