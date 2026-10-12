@@ -1,7 +1,7 @@
 import hmac,json,os,threading,urllib.parse
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
-from bot import Config,Store,TelegramAPI,PRODUCT,validate_init_data
+from bot import Config,Store,TelegramAPI,PRODUCT,SERVICE,validate_init_data
 ROOT=Path(__file__).resolve().parent
 config=Config(token=os.environ.get('BOT_TOKEN',''),public_url=os.environ.get('PUBLIC_URL','').rstrip('/'),channel_username=os.environ.get('CHANNEL_USERNAME','').lstrip('@'),support_username=os.environ.get('SUPPORT_USERNAME','').lstrip('@'))
 store=Store(config,TelegramAPI(config.token))
@@ -13,7 +13,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path=urllib.parse.urlsplit(self.path).path
         if path=='/health':return self.output(200,{'ok':True,'mode':'demo','payments_enabled':False,'bot_configured':bool(config.token)})
-        if path=='/api/catalog':return self.output(200,{'mode':'demo','products':[PRODUCT]})
+        if path=='/api/catalog':return self.output(200,{'mode':'demo','products':[SERVICE,PRODUCT]})
         if path in ('/','/index.html'):return self.output(200,(ROOT/'public/index.html').read_bytes(),'text/html; charset=utf-8')
         return self.output(404,{'error':'Not found'})
     def do_POST(self):

@@ -15,6 +15,13 @@ DEMO_FILE = ('Wajha Store — ملف تجربة التسليم\n\n'
     'ليس هذا قالب الموقع الكامل، وليس إثباتًا لعملية دفع.\n'
     'القالب الكامل سيُسلّم عند تفعيل البيع وتحديد السعر.\n\n'
     'للمساعدة استخدم /support داخل البوت.\n').encode('utf-8')
+SERVICE = {
+    'id': 'telegram-bot-creation', 'title': 'إنشاء بوتات تلجرام',
+    'description': 'إنشاء بوت تلجرام حسب فكرتك، مع تحديد الأوامر والأزرار وطريقة التفاعل قبل التنفيذ.',
+    'kind': 'service', 'price_label': 'حسب متطلباتك',
+    'payment_enabled': False, 'price_stars': None,
+    'delivery': 'السعر ومدة التنفيذ يتحددان بعد مراجعة المتطلبات',
+}
 TERMS = 'المتجر في مرحلة التجربة. الطلبات الحالية مجانية وتجريبية، ولا تمنح ترخيص شراء للقالب. لا توجد مدفوعات مفعّلة. ستظهر شروط البيع والدعم والسعر قبل تفعيل الشراء.'
 
 @dataclasses.dataclass
@@ -57,6 +64,7 @@ class Store:
         self.lock = threading.RLock()
     def keyboard(self):
         rows = [[{'text': 'المنتجات', 'callback_data': 'catalog'}, {'text': 'تجربة طلب مجاني', 'callback_data': 'demo'}]]
+        rows.append([{'text': 'إنشاء بوتات تلجرام', 'callback_data': 'createbot'}])
         if self.config.public_url:
             rows.append([{'text': 'فتح المتجر', 'web_app': {'url': self.config.public_url}}])
         else: rows.append([{'text': 'واجهة المتجر', 'callback_data': 'shop'}])
@@ -74,6 +82,7 @@ class Store:
     def demo_prompt(self, chat_id):
         self.send(chat_id, 'طلب تجريبي مجاني\n\nسيصلك ملف صغير لاختبار التسليم داخل تيليجرام. لن تُخصم أموال أو نجوم، والملف لا يحتوي القالب المدفوع الكامل.', {'inline_keyboard': [[{'text': 'تأكيد التجربة واستلام الملف', 'callback_data': 'demo_confirm'}], [{'text': 'رجوع', 'callback_data': 'start'}]]})
     def deliver_demo(self, user_id):
+        # The custom bot service never uses this free file delivery path.
         order_id = 'DEMO-' + secrets.token_hex(4).upper()
         self.api.call('sendDocument', {'chat_id': user_id, 'caption': 'تسليم تجريبي مجاني — ' + order_id}, document=('Wajha-Demo-Delivery.txt', DEMO_FILE))
         order = {'id': order_id, 'status': 'demo_delivered', 'title': 'تجربة تسليم ملف', 'created_at': int(time.time()), 'paid': False}
@@ -84,6 +93,8 @@ class Store:
             while len(self.orders) > 500: self.orders.popitem(last=False)
         self.send(user_id, 'وصل ملف التجربة. هذا طلب تجريبي مجاني، وليس عملية شراء.', self.keyboard())
         return order
+    def show_service(self, chat_id):
+        self.send(chat_id, SERVICE['title'] + '\n\n' + SERVICE['description'] + '\n\nأمثلة: عرض المنتجات، استقبال الطلبات، والردود الجاهزة والأسئلة الشائعة.\n\nالسعر: حسب متطلباتك.\nمدة التنفيذ تُحدد بعد مراجعة الفكرة. استقبال طلبات الخدمة سيُفعّل بعد ربط التواصل بالمتجر.', self.keyboard())
     def get_orders(self, user_id):
         with self.lock: return list(self.orders.get(user_id, []))
     def handle(self, update):
@@ -107,12 +118,13 @@ class Store:
             command = text.split(' ', 1)[0].split('@')[0].lstrip('/')
             if command == 'start' and ' ' in text:
                 payload = text.split(' ', 1)[1]
-                if payload in ('demo','catalog','shop','orders','support','terms','paysupport'): command = payload
+                if payload in ('demo','catalog','shop','orders','support','terms','paysupport','createbot'): command = payload
         if message.get('successful_payment'):
             self.send(user_id, 'وصل إشعار دفع غير متوقع. تواصل مع دعم المتجر عبر /paysupport لمراجعته. لا توجد مبيعات مفعلة في هذه النسخة.')
         elif command in ('start', 'help'):
             self.send(user_id, 'أهلًا بك في Wajha | Template Store\n\nتصفّح المنتج أو جرّب الطلب والتسليم مجانًا. المتجر في مرحلة التجربة والدفع غير مفعّل.', self.keyboard())
         elif command in ('catalog', 'product:wajha-folio'): self.show_product(user_id)
+        elif command in ('createbot', 'service:telegram-bot-creation'): self.show_service(user_id)
         elif command == 'demo': self.demo_prompt(user_id)
         elif command == 'demo_confirm': self.deliver_demo(user_id)
         elif command == 'orders':
