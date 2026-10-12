@@ -28,3 +28,7 @@ Set AUTO_CONFIGURE_WEBHOOK=true only for the deployed public HTTPS origin.
 Never place BOT_TOKEN in HTML, Git, command-line flags, or this README.
 
 The native Site publication is an owner-private UI preview. Its static publication does not run this Python server; external hosting is required for continuous Telegram execution.
+
+## Current implementation update
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the current setup, hosting gates and verification limits. Service requests now have Telegram-authenticated, idempotent intake with SQLite persistence and customer receipts. `/admin` authorizes only OWNER_TELEGRAM_ID and edits catalog metadata, HTTPS image URLs, draft prices, options, colors, contacts and request statuses. Payments remain disabled. The free Render blueprint is an ephemeral preview, not durable live-order hosting. Earlier prototype notes above describe the prior implementation.

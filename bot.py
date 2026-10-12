@@ -2,6 +2,7 @@
 from __future__ import annotations
 import dataclasses, hashlib, hmac, io, json, os, re, secrets, threading, time, urllib.parse, urllib.request
 from collections import OrderedDict
+from storage import Database
 
 PRODUCT = {
     'id': 'wajha-folio', 'title': 'واجهة — قالب معرض أعمال',
@@ -30,6 +31,8 @@ class Config:
     public_url: str = ''
     channel_username: str = ''
     support_username: str = ''
+    owner_id: int = 0
+    accept_service_requests: bool = False
     @property
     def webhook_secret(self):
         return hmac.new(self.token.encode(), b'wajha-webhook-v1', hashlib.sha256).hexdigest()
@@ -58,8 +61,9 @@ class TelegramAPI:
         return result.get('result')
 
 class Store:
-    def __init__(self, config, api):
+    def __init__(self, config, api, database=None):
         self.config, self.api = config, api
+        self.database = database or Database(':memory:')
         self.orders, self.seen = OrderedDict(), OrderedDict()
         self.lock = threading.RLock()
     def keyboard(self):
@@ -77,7 +81,8 @@ class Store:
         if keyboard: params['reply_markup'] = keyboard
         return self.api.call('sendMessage', params)
     def show_product(self, chat_id):
-        text = PRODUCT['title'] + '\n\n' + PRODUCT['description'] + '\n\n' + '\n'.join('• ' + x for x in PRODUCT['features']) + '\n\nالسعر لم يُحدد بعد. يمكنك تجربة الطلب وتسليم ملف تجريبي مجانًا.'
+        product = next((p for p in self.database.get('products',[PRODUCT]) if p['id']==PRODUCT['id']),PRODUCT)
+        text = product['title'] + '\n\n' + product.get('description','') + '\n\n' + '\n'.join('• ' + x for x in product.get('features',[])) + '\n\nالسعر لم يُحدد بعد. يمكنك تجربة الطلب وتسليم ملف تجريبي مجانًا.'
         self.send(chat_id, text, {'inline_keyboard': [[{'text': 'تجربة الطلب والتسليم', 'callback_data': 'demo'}], [{'text': 'شروط التجربة', 'callback_data': 'terms'}], [{'text': 'القائمة الرئيسية', 'callback_data': 'start'}]]})
     def demo_prompt(self, chat_id):
         self.send(chat_id, 'طلب تجريبي مجاني\n\nسيصلك ملف صغير لاختبار التسليم داخل تيليجرام. لن تُخصم أموال أو نجوم، والملف لا يحتوي القالب المدفوع الكامل.', {'inline_keyboard': [[{'text': 'تأكيد التجربة واستلام الملف', 'callback_data': 'demo_confirm'}], [{'text': 'رجوع', 'callback_data': 'start'}]]})
@@ -91,12 +96,13 @@ class Store:
             self.orders[user_id] = (previous + [order])[-5:]
             self.orders.move_to_end(user_id)
             while len(self.orders) > 500: self.orders.popitem(last=False)
+        self.database.add(user_id, order)
         self.send(user_id, 'وصل ملف التجربة. هذا طلب تجريبي مجاني، وليس عملية شراء.', self.keyboard())
         return order
     def show_service(self, chat_id):
-        self.send(chat_id, SERVICE['title'] + '\n\n' + SERVICE['description'] + '\n\nأمثلة: عرض المنتجات، استقبال الطلبات، والردود الجاهزة والأسئلة الشائعة.\n\nالسعر: حسب متطلباتك.\nمدة التنفيذ تُحدد بعد مراجعة الفكرة. استقبال طلبات الخدمة سيُفعّل بعد ربط التواصل بالمتجر.', self.keyboard())
+        self.send(chat_id, SERVICE['title'] + '\n\n' + SERVICE['description'] + '\n\nأمثلة: عرض المنتجات، استقبال الطلبات، والردود الجاهزة والأسئلة الشائعة.\n\nالسعر: حسب متطلباتك.\nمدة التنفيذ تُحدد بعد مراجعة الفكرة. افتح المتجر لإرسال المتطلبات والحصول على رقم الطلب.', self.keyboard())
     def get_orders(self, user_id):
-        with self.lock: return list(self.orders.get(user_id, []))
+        return self.database.orders(user_id)[:5]
     def handle(self, update):
         if 'pre_checkout_query' in update:
             self.api.call('answerPreCheckoutQuery', {'pre_checkout_query_id': update['pre_checkout_query']['id'], 'ok': False, 'error_message': 'الشراء والدفع غير مفعّلين في نسخة التجربة.'})
@@ -129,13 +135,15 @@ class Store:
         elif command == 'demo_confirm': self.deliver_demo(user_id)
         elif command == 'orders':
             orders = self.get_orders(user_id)
-            self.send(user_id, 'آخر تجارب التسليم في الجلسة الحالية:\n' + '\n'.join(x['id'] + ' — تم التسليم مجانًا' for x in orders) if orders else 'لا توجد طلبات مدفوعة. سجل التجربة مؤقت ويمكن تجربة التسليم من /demo.', self.keyboard())
+            self.send(user_id, 'آخر الطلبات:\n' + '\n'.join(x['id'] + ' — ' + x['status'] for x in orders) if orders else 'لا توجد طلبات مدفوعة. يمكن إرسال طلب خدمة من المتجر أو تجربة التسليم من /demo.', self.keyboard())
         elif command == 'terms': self.send(user_id, TERMS, self.keyboard())
         elif command in ('support', 'paysupport'):
             text = 'المتجر تجريبي والدفع غير مفعّل. زر /demo يختبر تسليم ملف. دعم مشتريات المتجر يكون من صاحب المتجر، وليس دعم تيليجرام.'
             if self.config.support_username: text += '\nللتواصل: https://t.me/' + self.config.support_username
             else: text += '\nحساب الدعم المباشر سيُربط قبل تفعيل البيع.'
             self.send(user_id, text, self.keyboard())
+        elif command == 'admin' and user_id == self.config.owner_id and self.config.public_url:
+            self.send(user_id, 'لوحة إدارة واجهة', {'inline_keyboard': [[{'text':'إدارة المتجر','web_app':{'url':self.config.public_url+'/admin'}}]]})
         elif command == 'shop':
             self.send(user_id, 'واجهة المتجر جاهزة للمعاينة. رابط فتحها داخل تيليجرام سيُضاف بعد تحديد حساب الاستضافة ونشر التشغيل المستمر.', self.keyboard())
         else: self.send(user_id, 'استخدم الأزرار أو أرسل /start لعرض المتجر.', self.keyboard())

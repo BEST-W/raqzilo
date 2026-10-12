@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     region: frankfurt
-    buildCommand: python -m compileall bot.py server.py
+    buildCommand: python -m compileall bot.py server.py storage.py
     startCommand: python server.py
     healthCheckPath: /health
     envVars:
@@ -15,8 +15,14 @@ services:
       - key: PUBLIC_URL
         sync: false
       - key: AUTO_CONFIGURE_WEBHOOK
-        value: "true"
+        value: "false"
       - key: CHANNEL_USERNAME
         sync: false
       - key: SUPPORT_USERNAME
         sync: false
+      - key: OWNER_TELEGRAM_ID
+        value: "5491407621"
+      - key: DATA_DIR
+        value: /tmp/wajha-data
+      - key: ACCEPT_SERVICE_REQUESTS
+        value: "false"
