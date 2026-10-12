@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: wajha-store
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: python -m compileall bot.py server.py
+    startCommand: python server.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.9
+      - key: BOT_TOKEN
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: AUTO_CONFIGURE_WEBHOOK
+        value: "true"
+      - key: CHANNEL_USERNAME
+        sync: false
+      - key: SUPPORT_USERNAME
+        sync: false
