@@ -22,7 +22,20 @@ SERVICE = {
     'kind': 'service', 'price_label': 'حسب متطلباتك',
     'payment_enabled': False, 'price_stars': None,
     'delivery': 'السعر ومدة التنفيذ يتحددان بعد مراجعة المتطلبات',
+    'features': ['عرض المنتجات واستقبال الطلبات', 'ردود جاهزة وأسئلة شائعة', 'قوائم وأزرار حسب فكرتك'],
 }
+AGENT_SERVICE = {
+    'id': 'ai-agent-building', 'title': 'بناء وكلاء الذكاء الاصطناعي',
+    'subtitle': 'AI Agent Development', 'category': 'services', 'cover': 'agents',
+    'kind': 'service', 'service': True, 'demo': False, 'visible': True,
+    'description': 'بناء وكيل ذكاء اصطناعي حسب احتياجك، يساعد في الإجابة من مصادر محددة أو تنفيذ مهام وربط أدواتك ضمن نطاق متفق عليه.',
+    'features': ['مساعد لخدمة العملاء والأسئلة المتكررة', 'الإجابة من ملفاتك ومصادر المعرفة المحددة', 'أتمتة مهام وربط أدوات وأنظمة', 'اختبار الوكيل وتسليم طريقة الاستخدام'],
+    'options': ['مساعد محادثة', 'وكيل يعتمد على ملفات ومصادر معرفة', 'أتمتة مهام وربط أدوات'],
+    'meta': 'AI Agents · خدمة حسب الطلب', 'price_label': 'حسب متطلبات المشروع',
+    'payment_enabled': False, 'price_stars': None,
+    'delivery': 'تُحدد المهام والأدوات والسعر ومدة التنفيذ بعد مراجعة فكرتك. تكاليف خدمات الذكاء الاصطناعي والاستضافة، إن لزمت، تُتفق بشكل منفصل.',
+}
+SERVICES = {p['id']: p for p in (SERVICE, AGENT_SERVICE)}
 TERMS = 'المتجر في مرحلة التجربة. الطلبات الحالية مجانية وتجريبية، ولا تمنح ترخيص شراء للقالب. لا توجد مدفوعات مفعّلة. ستظهر شروط البيع والدعم والسعر قبل تفعيل الشراء.'
 
 @dataclasses.dataclass
@@ -69,6 +82,8 @@ class Store:
     def keyboard(self):
         rows = [[{'text': 'المنتجات', 'callback_data': 'catalog'}, {'text': 'تجربة طلب مجاني', 'callback_data': 'demo'}]]
         rows.append([{'text': 'إنشاء بوتات تلجرام', 'callback_data': 'createbot'}])
+        if any(p['id'] == AGENT_SERVICE['id'] and p.get('visible', True) for p in self.database.get('products', [AGENT_SERVICE])):
+            rows.append([{'text': 'بناء وكلاء الذكاء الاصطناعي', 'callback_data': 'agents'}])
         if self.config.public_url:
             rows.append([{'text': 'فتح المتجر', 'web_app': {'url': self.config.public_url}}])
         else: rows.append([{'text': 'واجهة المتجر', 'callback_data': 'shop'}])
@@ -99,8 +114,19 @@ class Store:
         self.database.add(user_id, order)
         self.send(user_id, 'وصل ملف التجربة. هذا طلب تجريبي مجاني، وليس عملية شراء.', self.keyboard())
         return order
-    def show_service(self, chat_id):
-        self.send(chat_id, SERVICE['title'] + '\n\n' + SERVICE['description'] + '\n\nأمثلة: عرض المنتجات، استقبال الطلبات، والردود الجاهزة والأسئلة الشائعة.\n\nالسعر: حسب متطلباتك.\nمدة التنفيذ تُحدد بعد مراجعة الفكرة. افتح المتجر لإرسال المتطلبات والحصول على رقم الطلب.', self.keyboard())
+    def show_service(self, chat_id, product_id=SERVICE['id']):
+        service = next((p for p in self.database.get('products', list(SERVICES.values())) if p['id'] == product_id and p.get('visible', True)), None)
+        if service is None:
+            self.send(chat_id, 'الخدمة غير متاحة حاليًا.', self.keyboard())
+            return
+        text = service['title'] + '\n\n' + service.get('description', '')
+        text += '\n\n' + '\n'.join('• ' + item for item in service.get('features', []))
+        text += '\n\nالسعر: ' + service.get('price_label', 'حسب متطلبات المشروع')
+        text += '\n' + service.get('delivery', 'السعر ومدة التنفيذ بعد مراجعة المتطلبات')
+        text += '\n\nافتح المتجر لتجهيز متطلباتك.'
+        if not self.config.accept_service_requests:
+            text += ' استقبال الطلبات والدفع غير مفعّلين حاليًا.'
+        self.send(chat_id, text, self.keyboard())
     def get_orders(self, user_id):
         return self.database.orders(user_id)[:5]
     def handle(self, update):
@@ -124,13 +150,14 @@ class Store:
             command = text.split(' ', 1)[0].split('@')[0].lstrip('/')
             if command == 'start' and ' ' in text:
                 payload = text.split(' ', 1)[1]
-                if payload in ('demo','catalog','shop','orders','support','terms','paysupport','createbot'): command = payload
+                if payload in ('demo','catalog','shop','orders','support','terms','paysupport','createbot','agents'): command = payload
         if message.get('successful_payment'):
             self.send(user_id, 'وصل إشعار دفع غير متوقع. تواصل مع دعم المتجر عبر /paysupport لمراجعته. لا توجد مبيعات مفعلة في هذه النسخة.')
         elif command in ('start', 'help'):
             self.send(user_id, 'أهلًا بك في Wajha | Template Store\n\nتصفّح المنتج أو جرّب الطلب والتسليم مجانًا. المتجر في مرحلة التجربة والدفع غير مفعّل.', self.keyboard())
         elif command in ('catalog', 'product:wajha-folio'): self.show_product(user_id)
         elif command in ('createbot', 'service:telegram-bot-creation'): self.show_service(user_id)
+        elif command in ('agents', 'service:ai-agent-building'): self.show_service(user_id, AGENT_SERVICE['id'])
         elif command == 'demo': self.demo_prompt(user_id)
         elif command == 'demo_confirm': self.deliver_demo(user_id)
         elif command == 'orders':

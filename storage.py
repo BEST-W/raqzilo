@@ -22,6 +22,19 @@ class Database:
     def put(self, key, value):
         with self.lock, self.db:
             self.db.execute('INSERT OR REPLACE INTO config VALUES (?,?)', (key,json.dumps(value,ensure_ascii=False)))
+    def ensure_product(self, product, defaults):
+        """Seed a new offering once; retain owner edits and later hiding/removal."""
+        marker = 'catalog-added:' + product['id']
+        with self.lock, self.db:
+            products = self.get('products', None)
+            if products is None:
+                products = json.loads(json.dumps(defaults))
+            if not self.get(marker, False):
+                if not any(p['id'] == product['id'] for p in products):
+                    products = [*products, json.loads(json.dumps(product))]
+                self.db.execute('INSERT OR REPLACE INTO config VALUES (?,?)', ('products', json.dumps(products, ensure_ascii=False)))
+                self.db.execute('INSERT OR REPLACE INTO config VALUES (?,?)', (marker, 'true'))
+            return products
     def orders(self, user=None):
         with self.lock:
             sql = 'SELECT data FROM orders'
@@ -33,12 +46,12 @@ class Database:
                 row=self.db.execute('SELECT data FROM orders WHERE user_id=? AND request_key=?',(user,key)).fetchone()
                 if row:
                     existing=json.loads(row[0])
-                    if existing.get('brief') != order.get('brief'): raise ValueError('Request key reused for another brief')
+                    if existing.get('brief') != order.get('brief') or existing.get('product_id', 'telegram-bot-creation') != order.get('product_id', 'telegram-bot-creation'): raise ValueError('Request key reused for another brief or service')
                     return existing
             order={**order,'user_id':user}
             self.db.execute('INSERT INTO orders VALUES (?,?,?,?)',(order['id'],user,key,json.dumps(order,ensure_ascii=False)))
             return order
-    def service(self, user, brief, key):
+    def service(self, user, brief, key, product_id='telegram-bot-creation', title='إنشاء بوتات تلجرام'):
         if not isinstance(brief,dict) or not isinstance(key,str) or not re.fullmatch(r'[a-zA-Z0-9_-]{16,80}',key): raise ValueError('Invalid request key')
         limits={'name':80,'kind':80,'idea':1200}
         clean={}
@@ -46,7 +59,7 @@ class Database:
             value=brief.get(field)
             if not isinstance(value,str) or not 1<=len(value.strip())<=limit: raise ValueError('Invalid brief: '+field)
             clean[field]=value.strip()
-        return self.add(user,{'id':'REQ-'+secrets.token_hex(8).upper(),'title':'إنشاء بوتات تلجرام','status':'submitted','created_at':int(time.time()),'paid':False,'brief':clean},key)
+        return self.add(user,{'id':'REQ-'+secrets.token_hex(8).upper(),'product_id':product_id,'title':title,'status':'submitted','created_at':int(time.time()),'paid':False,'brief':clean},key)
     def status(self, ident, status):
         if status not in ('submitted','reviewing','awaiting_customer','completed','cancelled'): raise ValueError('Invalid status')
         with self.lock, self.db:

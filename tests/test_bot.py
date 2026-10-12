@@ -27,6 +27,22 @@ class StoreTests(unittest.TestCase):
         update=self.message('/demo');update['message']['chat']['type']='group';self.store.handle(update);self.assertEqual(self.api.calls,[])
     def test_web_app_button_requires_configured_public_origin(self):
         self.assertNotIn('web_app',json.dumps(self.store.keyboard()));self.store.config.public_url='https://example.com';self.assertIn('web_app',json.dumps(self.store.keyboard()))
+    def test_agent_service_command_and_deep_link_do_not_deliver_or_charge(self):
+        for i,text in enumerate(('/agents','/start agents'),30):
+            self.store.handle(self.message(text,i))
+            message=self.api.calls[-1][1]['text']
+            self.assertIn('بناء وكلاء الذكاء الاصطناعي',message)
+            self.assertIn('حسب متطلبات المشروع',message)
+            self.assertIn('غير مفعّلين',message)
+        self.assertFalse(any(c[0] in ('sendDocument','sendInvoice') for c in self.api.calls))
+    def test_admin_entry_is_only_sent_to_the_owner(self):
+        self.store.config.public_url='https://example.com'
+        self.store.config.owner_id=999
+        self.store.handle(self.message('/admin',40))
+        self.assertNotIn('/admin',json.dumps(self.api.calls[-1][1]))
+        self.store.config.owner_id=123
+        self.store.handle(self.message('/admin',41))
+        self.assertIn('https://example.com/admin',json.dumps(self.api.calls[-1][1]))
     def signed(self,values,token='test-key'):
         check='\n'.join(k+'='+v for k,v in sorted(values.items()));key=hmac.new(b'WebAppData',token.encode(),hashlib.sha256).digest();digest=hmac.new(key,check.encode(),hashlib.sha256).hexdigest();return urllib.parse.urlencode({**values,'hash':digest})
     def test_init_data_valid_signature_identifies_user(self):

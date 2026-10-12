@@ -1,14 +1,14 @@
 import hmac,json,os,re,urllib.parse
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
-from bot import Config,Store,TelegramAPI,PRODUCT,SERVICE,validate_init_data
+from bot import Config,Store,TelegramAPI,PRODUCT,SERVICE,AGENT_SERVICE,SERVICES,validate_init_data
 from storage import Database
 ROOT=Path(__file__).resolve().parent
 config=Config(token=os.environ.get('BOT_TOKEN',''),public_url=os.environ.get('PUBLIC_URL','').rstrip('/'),channel_username=os.environ.get('CHANNEL_USERNAME','').lstrip('@'),support_username=os.environ.get('SUPPORT_USERNAME','').lstrip('@'),owner_id=int(os.environ.get('OWNER_TELEGRAM_ID','0')),accept_service_requests=os.environ.get('ACCEPT_SERVICE_REQUESTS','false')=='true')
 store=Store(config,TelegramAPI(config.token),Database(str(Path(os.environ.get('DATA_DIR',str(ROOT/'data')))/'store.sqlite3')))
-DEFAULT_PRODUCTS=[{**SERVICE,'category':'services','cover':'bot','service':True,'demo':False,'visible':True,'subtitle':'Custom Telegram Bots','meta':'خدمة مخصصة · حسب فكرتك'}, {**PRODUCT,'category':'web','cover':'folio','demo':True,'visible':True,'subtitle':'Wajha Folio','meta':'HTML · محرر مرفق'}]
+DEFAULT_PRODUCTS=[{**SERVICE,'category':'services','cover':'bot','service':True,'demo':False,'visible':True,'subtitle':'Custom Telegram Bots','meta':'خدمة مخصصة · حسب فكرتك'}, {**PRODUCT,'category':'web','cover':'folio','demo':True,'visible':True,'subtitle':'Wajha Folio','meta':'HTML · محرر مرفق'}, AGENT_SERVICE]
 DEFAULT_SETTINGS={'accent':'#b998d7','background':'#0b090f','support_username':config.support_username,'channel_username':config.channel_username,'phone':'','email':'','service_fields':['name','kind','idea']}
-def catalog(): return store.database.get('products',DEFAULT_PRODUCTS)
+def catalog(): return store.database.ensure_product(AGENT_SERVICE,DEFAULT_PRODUCTS)
 def settings(): return store.database.get('settings',DEFAULT_SETTINGS)
 def validate_products(items):
     if not isinstance(items,list) or not 1<=len(items)<=50: raise ValueError('Invalid products')
@@ -22,7 +22,7 @@ def validate_products(items):
             if key in p and (not isinstance(p[key],str) or len(p[key])>2000): raise ValueError('Invalid '+key)
         if not p.get('title'): raise ValueError('Title required')
         if p.get('category') not in ('services','web','files'): raise ValueError('Invalid category')
-        if p.get('cover','folio') not in ('bot','folio','cv','shop','landing'): raise ValueError('Invalid cover')
+        if p.get('cover','folio') not in ('bot','agents','folio','cv','shop','landing'): raise ValueError('Invalid cover')
         image=p.get('image_url','')
         if not isinstance(image,str) or len(image)>2000 or (image and (urllib.parse.urlsplit(image).scheme!='https' or not urllib.parse.urlsplit(image).hostname)): raise ValueError('Image must use HTTPS')
         for field in ('features','options'):
@@ -31,7 +31,7 @@ def validate_products(items):
         for field in ('visible','demo','service'):
             if field in p and type(p[field]) is not bool: raise ValueError('Invalid '+field)
         if p.get('demo') and ident!='wajha-folio': raise ValueError('Only Folio has a demo')
-        if p.get('service') and ident!='telegram-bot-creation': raise ValueError('Unsupported service')
+        if p.get('service') and ident not in SERVICES: raise ValueError('Unsupported service')
         price=p.get('price_stars')
         if price is not None and (type(price) is not int or not 1<=price<=1000000): raise ValueError('Invalid draft price')
         p['payment_enabled']=False
@@ -60,7 +60,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path=urllib.parse.urlsplit(self.path).path
         if path=='/health':return self.output(200,{'ok':True,'mode':'demo','payments_enabled':False,'bot_configured':bool(config.token),'service_requests_enabled':config.accept_service_requests})
-        if path=='/api/catalog':return self.output(200,{'mode':'demo','products':[p for p in catalog() if p.get('visible',True)],'settings':settings()})
+        if path=='/api/catalog':return self.output(200,{'mode':'demo','products':[p for p in catalog() if p.get('visible',True)],'settings':settings(),'service_requests_enabled':config.accept_service_requests})
         if path in ('/','/index.html','/admin'):
             name='admin.html' if path=='/admin' else 'index.html'
             return self.output(200,(ROOT/'public'/name).read_bytes(),'text/html; charset=utf-8')
@@ -90,8 +90,11 @@ class Handler(BaseHTTPRequestHandler):
             if path=='/api/service-request':
                 if not config.accept_service_requests:return self.output(503,{'error':'Service requests are closed until persistent hosting is verified'})
                 if not config.owner_id:return self.output(503,{'error':'Merchant account is not configured'})
-                if not any(p['id']=='telegram-bot-creation' and p.get('visible',True) for p in catalog()):return self.output(409,{'error':'Service unavailable'})
-                order=store.database.service(user,body.get('brief'),body.get('request_key'))
+                product_id=body.get('product_id',SERVICE['id'])
+                if not isinstance(product_id,str) or product_id not in SERVICES:return self.output(400,{'error':'Unknown service'})
+                service=next((p for p in catalog() if p['id']==product_id and p.get('visible',True) and p.get('service')),None)
+                if service is None:return self.output(409,{'error':'Service unavailable'})
+                order=store.database.service(user,body.get('brief'),body.get('request_key'),product_id,service['title'])
                 return self.output(201,{'order':order,'confirmation':'تم حفظ طلبك في لوحة صاحب المتجر. السعر والمدة بعد مراجعة المتطلبات.'})
             if body.get('product_id')!=PRODUCT['id']:return self.output(400,{'error':'Unknown product'})
             if not any(p['id']==PRODUCT['id'] and p.get('visible',True) and p.get('demo') for p in catalog()):return self.output(409,{'error':'Demo unavailable'})
@@ -101,6 +104,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     port=int(os.environ.get('PORT','10000'))
+    catalog()
     if os.environ.get('AUTO_CONFIGURE_WEBHOOK')=='true' and config.token and config.public_url:
         parsed=urllib.parse.urlsplit(config.public_url)
         if parsed.scheme!='https' or not parsed.hostname or parsed.path or parsed.query or parsed.fragment or parsed.username:raise SystemExit('PUBLIC_URL must be an HTTPS origin')

@@ -50,3 +50,49 @@ class RequestTests(unittest.TestCase):
   server.config.accept_service_requests=False
   self.assertEqual(self.submit()[0],503)
   self.assertEqual(server.store.database.orders(),[])
+
+ def agent_request(self,key='agent-request-123456'):
+  return self.post('/api/service-request',{'init_data':self.init(),'product_id':'ai-agent-building','request_key':key,'brief':{'name':'مساعد المعرفة','kind':'الإجابة من ملفات','idea':'الإجابة عن أسئلة العملاء من ملفات الشركة'}})
+ def test_agent_receipt_retains_service_identity_after_restart(self):
+  code,result=self.agent_request();self.assertEqual(code,201)
+  order=result['order'];self.assertEqual(order['product_id'],'ai-agent-building');self.assertEqual(order['title'],'بناء وكلاء الذكاء الاصطناعي')
+  server.store.database.db.close();server.store.database=Database(self.path)
+  self.assertEqual(self.agent_request()[1]['order']['id'],order['id'])
+  self.assertEqual(self.post('/api/my-orders',{'init_data':self.init()})[1]['orders'][0]['product_id'],'ai-agent-building')
+  self.assertFalse(order['paid'])
+ def test_request_key_cannot_be_reused_for_another_service(self):
+  body={'init_data':self.init(),'request_key':'same-key-12345678','brief':{'name':'مشروع','kind':'مساعد','idea':'الرد على الأسئلة'}}
+  self.assertEqual(self.post('/api/service-request',body)[0],201)
+  self.assertEqual(self.post('/api/service-request',{**body,'product_id':'ai-agent-building'})[0],400)
+  self.assertEqual(len(server.store.database.orders()),1)
+ def test_hidden_or_unknown_services_cannot_accept_requests(self):
+  products=json.loads(json.dumps(server.catalog()))
+  next(p for p in products if p['id']=='ai-agent-building')['visible']=False
+  self.assertEqual(self.post('/api/admin/products',{'init_data':self.init(),'products':products})[0],200)
+  self.assertEqual(self.agent_request()[0],409)
+  self.assertEqual(self.post('/api/service-request',{'init_data':self.init(),'product_id':'unknown'})[0],400)
+  self.assertEqual(server.store.database.orders(),[])
+ def test_agent_catalog_upgrade_keeps_owner_edits_and_does_not_restore_hidden_service(self):
+  products=json.loads(json.dumps(server.DEFAULT_PRODUCTS[:2]));products[0]['title']='خدمة مخصصة باسمي'
+  server.store.database.put('products',products)
+  updated=server.catalog();self.assertEqual(updated[0]['title'],'خدمة مخصصة باسمي')
+  self.assertEqual(sum(p['id']=='ai-agent-building' for p in updated),1)
+  next(p for p in updated if p['id']=='ai-agent-building')['visible']=False
+  server.store.database.put('products',updated)
+  server.store.database.db.close();server.store.database=Database(self.path)
+  self.assertFalse(next(p for p in server.catalog() if p['id']=='ai-agent-building')['visible'])
+  server.store.database.put('products',products)
+  self.assertEqual(server.catalog(),products)
+ def test_customer_cannot_read_or_change_owner_settings_catalog_or_orders(self):
+  order=self.submit()[1]['order'];server.config.owner_id=999
+  bodies={'state':{},'products':{'products':server.DEFAULT_PRODUCTS},'settings':{'settings':{}},'order':{'id':order['id'],'status':'completed'}}
+  for endpoint,body in bodies.items():
+   self.assertEqual(self.post('/api/admin/'+endpoint,{**body,'init_data':self.init()})[0],403)
+   self.assertEqual(self.post('/api/admin/'+endpoint,{**body,'init_data':'unsigned'})[0],400)
+  self.assertEqual(server.store.database.orders()[0]['status'],'submitted')
+ def test_agent_service_obeys_preview_gate_and_cannot_use_demo_delivery(self):
+  server.config.accept_service_requests=False
+  self.assertEqual(self.agent_request()[0],503)
+  self.assertEqual(self.post('/api/demo-order',{'init_data':self.init(),'product_id':'ai-agent-building'})[0],400)
+  self.assertEqual(server.store.database.orders(),[])
+  self.assertFalse(any(c[0] in ('sendInvoice','sendDocument') for c in server.store.api.calls))
